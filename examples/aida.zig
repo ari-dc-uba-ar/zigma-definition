@@ -1,13 +1,20 @@
 //! EXAMPLE: the students system (the same aida example of system-design).
 
+const std = @import("std");
 const zigma = @import("zigma");
 
 pub const Fecha = struct { @"año": u16, mes: u8, @"día": u8 };
 
-pub const type_defs = zigma.merge(.{ zigma.common_type_defs, .{
+pub const type_defs = zigma.defineTypes(zigma.merge(.{ zigma.common_type_defs, .{
     .fecha = zigma.TypeDef{ .Type = Fecha },
     .email = zigma.common_type_defs.text,
-} });
+} }));
+
+/// the instance type of a record def, bound to this system's type_defs:
+/// DefinedType(cargo) = struct { cargo: []const u8, orden: i64, ... }
+pub fn DefinedType(comptime rec: anytype) type {
+    return zigma.RecordInstanceType(type_defs, rec);
+}
 
 pub const cargo = zigma.record(type_defs, .{
     .cargo = .{ .type = "text" },
@@ -182,6 +189,17 @@ pub const record_defs = .{
     .presencia = presencia,
     .mesa = mesa,
 };
+
+/// A strongly typed business function: the parameter is the concrete
+/// instance type derived from the def, not anytype. An anonymous literal
+/// coerces (and is checked) at the call site; de-anonymizing a runtime value
+/// (e.g. parsed JSON) is the job of an earlier parse/guarantee function,
+/// not of the business functions.
+pub fn validarCargo(cargo_sin_validar: DefinedType(cargo)) error{AyudanteNoPuedeDirigir}!void {
+    if (cargo_sin_validar.puede_dirigir and std.ascii.findIgnoreCase(cargo_sin_validar.denominacion, "ayudante") != null) {
+        return error.AyudanteNoPuedeDirigir;
+    }
+}
 
 pub const entity_defs = zigma.defineEntities(.{
     .docentes = docentes,

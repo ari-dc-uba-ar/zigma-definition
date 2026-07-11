@@ -44,6 +44,26 @@ test "deduces the record instance type" {
     }
 }
 
+test "types record instances anywhere with DefinedType" {
+    // a typed declaration: the anonymous literal is de-anonymized (coerced
+    // and checked) right here, against the declared type
+    const titular: aida.DefinedType(aida.cargo) = .{
+        .cargo = "TIT",
+        .denominacion = "Titular",
+        .orden = 1,
+        .puede_dirigir = true,
+    };
+    // a valid instance compiles and passes the validation:
+    try aida.validarCargo(titular);
+    // and the validation logic runs over the typed instance:
+    try std.testing.expectError(error.AyudanteNoPuedeDirigir, aida.validarCargo(.{
+        .cargo = "AY1",
+        .denominacion = "Ayudante de primera",
+        .orden = 5,
+        .puede_dirigir = true,
+    }));
+}
+
 test "completes a record def into a record info" {
     const materia_info = zigma.completeRecord(aida.materia);
     try expectEqualStrings("text", materia_info.materia.type);
@@ -179,6 +199,16 @@ test "marks the is_name field and completes it as false elsewhere" {
     const materia_info = zigma.completeRecord(aida.materia);
     try expect(!materia_info.materia.is_name);
     try expect(materia_info.denominacion.is_name);
+}
+
+test "defineTypes accepts the anonymous TypeDef shape too" {
+    const custom_types = zigma.defineTypes(.{ .texto = .{ .Type = []const u8 } });
+    const Row = zigma.RecordInstanceType(custom_types, zigma.record(custom_types, .{
+        .x = .{ .type = "texto" },
+    }));
+    comptime std.debug.assert(@FieldType(Row, "x") == []const u8);
+    const row: Row = .{ .x = "hola" };
+    try expectEqualStrings("hola", row.x);
 }
 
 // system-level checks (a fk against a uk of the target entity is accepted)

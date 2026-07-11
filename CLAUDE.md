@@ -36,6 +36,13 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * Las definiciones son valores comptime anónimos (structs literales); el equivalente del
   `satisfies` es `zigma.record(type_defs, .{...})`, que valida y devuelve el valor sin
   cambiarlo, conservando su tipo literal exacto (qué propiedades están presentes).
+* Criterio DevXP: los controles se agregan si ayudan al que define un sistema con la
+  librería a encontrar antes el problema, en el lugar donde está el error. Por eso
+  `defineTypes(.{...})` valida la colección de tipos en el punto de declaración (acepta
+  `zigma.TypeDef{...}` o la forma anónima estructuralmente igual); sin eso, una colección
+  malformada recién fallaría donde se usa por primera vez. `anytype` acá es genericidad
+  (los chequeos son comptime), no un `any`: Zig no permite declarar la cota del genérico
+  en la firma, la cota se impone con estos chequeos.
 * De la definición se derivan los tipos estáticos con funciones comptime
   (`RecordInstanceType`, `RecordInfoOf`, etc.): los campos se escriben una sola vez.
 * Def → Info: `completeRecord` / `completeEntity` explicitan todos los defaults

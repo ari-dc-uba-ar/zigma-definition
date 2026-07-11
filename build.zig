@@ -9,6 +9,8 @@ const std = @import("std");
 /// tail is not stable, the fragment file path is used as the start of the
 /// line: the compilation must fail AT the marked expression of the fragment.
 const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }{
+    .{ .file = "types_not_a_typedef.zig", .expected = "type 'text': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })" },
+    .{ .file = "types_extra_property.zig", .expected = "type 'fecha': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })" },
     .{ .file = "record_unknown_type.zig", .expected = "unknown type 'inexistente'" },
     .{ .file = "record_unknown_property.zig", .expected = "unknown property 'colour'" },
     .{ .file = "record_is_name_false.zig", .expected = "is_name only admits true in a definition (false is the default)" },
@@ -23,6 +25,9 @@ const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }
     .{ .file = "system_fk_unknown_entity.zig", .expected = "unknown target entity 'inexistentes'" },
     .{ .file = "system_fk_partial_pk.zig", .expected = "target fields do not match the complete pk nor any uk of entity 'franjas'" },
     .{ .file = "info_fks_no_array_form.zig", .expected = "test\\compile_errors\\info_fks_no_array_form.zig:/?/" },
+    .{ .file = "defined_type_wrong_field_type.zig", .expected = "expected type 'i64', found '*const [1:0]u8'" },
+    .{ .file = "validar_cargo_missing_field.zig", .expected = "test\\compile_errors\\validar_cargo_missing_field.zig:/?/" },
+    .{ .file = "defined_type_no_field.zig", .expected = "test\\compile_errors\\defined_type_no_field.zig:/?/" },
 };
 
 pub fn build(b: *std.Build) void {

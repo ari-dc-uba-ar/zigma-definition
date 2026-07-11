@@ -17,11 +17,40 @@ pub const TypeDef = struct {
     Type: type,
 };
 
-pub const common_type_defs = .{
+pub const common_type_defs = defineTypes(.{
     .text = TypeDef{ .Type = []const u8 },
     .integer = TypeDef{ .Type = i64 },
     .boolean = TypeDef{ .Type = bool },
-};
+});
+
+fn isTypeDefLike(comptime T: type) bool {
+    if (T == TypeDef) return true;
+    // an anonymous struct with exactly the shape of TypeDef is also accepted,
+    // like a structural `satisfies` would
+    const info = @typeInfo(T);
+    if (info != .@"struct" or info.@"struct".is_tuple) return false;
+    if (info.@"struct".field_names.len != 1) return false;
+    if (!eql(info.@"struct".field_names[0], "Type")) return false;
+    return info.@"struct".field_types[0] == type;
+}
+
+fn checkTypeDefs(comptime type_defs: anytype) void {
+    const info = @typeInfo(@TypeOf(type_defs));
+    if (info != .@"struct" or info.@"struct".is_tuple)
+        @compileError("a type collection must be a struct of TypeDef values");
+    inline for (info.@"struct".field_names) |type_name| {
+        if (!isTypeDefLike(@TypeOf(@field(type_defs, type_name))))
+            @compileError("type '" ++ type_name ++ "': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })");
+    }
+}
+
+/// The declaration-site check of a type collection: checks that every field
+/// is a TypeDef and returns the collection unchanged. Without it, a malformed
+/// collection would only fail where it is first used, far from the mistake.
+pub fn defineTypes(comptime type_defs: anytype) @TypeOf(type_defs) {
+    comptime checkTypeDefs(type_defs);
+    return type_defs;
+}
 
 /// The Info side of a field definition: everything explicit.
 pub const FieldInfo = struct {
