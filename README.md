@@ -1,5 +1,7 @@
 # zigma-definition
 
+system-definition all in zig
+
 Capa descriptiva para sistemas diseñados alrededor de una única fuente de verdad (SSOT).
 Port a Zig de [system-definition](https://github.com/ari-dc-uba-ar/system-definition)
 (TypeScript).
@@ -142,6 +144,21 @@ En etapa de diseño. Sigue, en Zig, los pasos de
 versión 0.1.1); no incluye todavía el equivalente del test de snapshot en formato TOON de ese
 repo, que depende de una librería sin equivalente en Zig.
 
+## Instalación
+
+```sh
+zig fetch --save git+https://github.com/ari-dc-uba-ar/zigma-definition.git#v0.1.0
+```
+
+Después en `build.zig`:
+
+```zig
+const zigma = b.dependency("zigma_definition", .{}).module("zigma");
+exe.root_module.addImport("zigma", zigma);
+```
+
+El paquete también exporta `aida`, descripto en `examples/aida.zig`.
+
 ## Licencia
 
-MIT (como [system-definition](https://github.com/ari-dc-uba-ar/system-definition)).
+MIT. Ver [LICENSE](LICENSE).
