@@ -19,3 +19,7 @@ The package also exports the module `aida`, the example system described in
 `examples/aida.zig`.
 
 Requires the Zig version declared as `minimum_zig_version` in `build.zig.zon`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
