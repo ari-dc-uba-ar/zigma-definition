@@ -74,6 +74,7 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * El matching de `expect_errors = .{ .contains = ... }` es **por línea**: el texto debe
   ser el final de alguna línea de error, o con el comodín `/?/` prefijo y sufijo de la
   línea. Para errores del framework se usa el mensaje completo; para errores nativos del
-  compilador (cuyo final no es estable) se usa el path del fragmento como prefijo, con
-  separadores `\\` (salida de Windows; si esto se corre en otro SO habrá que
-  contemplarlo).
+  compilador (cuyo final no es estable) se omite el `expected` y `build.zig` arma el path
+  del fragmento como prefijo, con el separador del host (`std.fs.path.sep_str`: `\` en
+  Windows, `/` en Linux), que es como lo imprime el compilador. Así los casos corren igual
+  en cualquiera de los dos.
