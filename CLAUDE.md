@@ -73,8 +73,9 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   evalúa en scope comptime y su acceso es comptime-known también en contexto runtime.
 * El matching de `expect_errors = .{ .contains = ... }` es **por línea**: el texto debe
   ser el final de alguna línea de error, o con el comodín `/?/` prefijo y sufijo de la
-  línea. Para errores del framework se usa el mensaje completo; para errores nativos del
-  compilador (cuyo final no es estable) se omite el `expected` y `build.zig` arma el path
-  del fragmento como prefijo, con el separador del host (`std.fs.path.sep_str`: `\` en
-  Windows, `/` en Linux), que es como lo imprime el compilador. Así los casos corren igual
-  en cualquiera de los dos.
+  línea. Solo el **primer** `/?/` de la línea es comodín y no hay regex: esas dos formas
+  son todo el vocabulario. Para errores del framework se usa el mensaje completo; para
+  errores nativos del compilador (cuyo final no es estable) el `expected` se escribe
+  `at("fragmento.zig")`, que concatena en comptime el path del fragmento como prefijo con
+  el separador del host (`std.fs.path.sep_str`: `\` en Windows, `/` en Linux), que es como
+  lo imprime el compilador. Así los casos corren igual en cualquiera de los dos.

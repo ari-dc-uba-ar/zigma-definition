@@ -1,36 +1,45 @@
 const std = @import("std");
 
+/// The error must be AT the marked expression of this fragment: its path, as
+/// the compiler prints it, is the start of the error line. Used for the native
+/// compiler messages, whose tail is not stable (it can end in the mangled name
+/// of an anonymous struct) and cannot be matched verbatim. The separator is
+/// the one of the host (`/` on posix, `\` on windows), which is how the
+/// compiler prints it, so the cases match on either system; it is a comptime
+/// constant, so the whole path is concatenated at compile time.
+fn at(comptime file: []const u8) []const u8 {
+    const sep = std.fs.path.sep_str;
+    return "test" ++ sep ++ "compile_errors" ++ sep ++ file ++ ":/?/";
+}
+
 /// Expected-compile-error cases: each file in test/compile_errors must FAIL
 /// to compile with a matching error (see Step.Compile.expect_errors). The
 /// match is per line: a plain string must be the END of some error line; with
 /// the /?/ wildcard the text before it must be the start of the line and the
-/// text after it the end. For the messages of the framework the full message
-/// is used (it is the end of the line); for native compiler messages whose
-/// tail is not stable, `expected` is left out and the fragment file path is
-/// used as the start of the line instead: the compilation must fail AT the
-/// marked expression of the fragment. That path is built with the separator of
-/// the host (`/` on posix, `\` on windows), which is how the compiler prints
-/// it, so the cases match on either system.
-const compile_error_cases = [_]struct { file: []const u8, expected: ?[]const u8 = null }{
+/// text after it the end (only the first /?/ of the line is a wildcard, and
+/// there is no regex: those two forms are the whole vocabulary). For the
+/// messages of the framework, which are ours and therefore stable, the full
+/// message is used; for the native ones, `at` (see above).
+const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }{
     .{ .file = "types_not_a_typedef.zig", .expected = "type 'text': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })" },
     .{ .file = "types_extra_property.zig", .expected = "type 'fecha': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })" },
     .{ .file = "record_unknown_type.zig", .expected = "unknown type 'inexistente'" },
     .{ .file = "record_unknown_property.zig", .expected = "unknown property 'colour'" },
     .{ .file = "record_is_name_false.zig", .expected = "is_name only admits true in a definition (false is the default)" },
     .{ .file = "instance_wrong_value_type.zig", .expected = "expected type 'i64', found '*const [6:0]u8'" },
-    .{ .file = "instance_unknown_field.zig" },
+    .{ .file = "instance_unknown_field.zig", .expected = at("instance_unknown_field.zig") },
     .{ .file = "entity_pk_not_in_fields.zig", .expected = "pk field 'inexistente' is not a field of the entity" },
     .{ .file = "entity_pk_partially_wrong.zig", .expected = "pk field 'inexistente' is not a field of the entity" },
     .{ .file = "entity_fk_source_not_in_fields_list.zig", .expected = "source field 'inexistente' is not a field of the entity" },
     .{ .file = "entity_fk_source_not_in_fields_map.zig", .expected = "source field 'inexistente' is not a field of the entity" },
     .{ .file = "entity_uk_not_in_fields.zig", .expected = "uk field 'inexistente' is not a field of the entity" },
-    .{ .file = "extract_pk_no_field.zig" },
+    .{ .file = "extract_pk_no_field.zig", .expected = at("extract_pk_no_field.zig") },
     .{ .file = "system_fk_unknown_entity.zig", .expected = "unknown target entity 'inexistentes'" },
     .{ .file = "system_fk_partial_pk.zig", .expected = "target fields do not match the complete pk nor any uk of entity 'franjas'" },
-    .{ .file = "info_fks_no_array_form.zig" },
+    .{ .file = "info_fks_no_array_form.zig", .expected = at("info_fks_no_array_form.zig") },
     .{ .file = "defined_type_wrong_field_type.zig", .expected = "expected type 'i64', found '*const [1:0]u8'" },
-    .{ .file = "validar_cargo_missing_field.zig" },
-    .{ .file = "defined_type_no_field.zig" },
+    .{ .file = "validar_cargo_missing_field.zig", .expected = at("validar_cargo_missing_field.zig") },
+    .{ .file = "defined_type_no_field.zig", .expected = at("defined_type_no_field.zig") },
 };
 
 pub fn build(b: *std.Build) void {
@@ -81,9 +90,7 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
-        const sep = std.fs.path.sep_str;
-        case_obj.expect_errors = .{ .contains = case.expected orelse
-            b.fmt("test{s}compile_errors{s}{s}:/?/", .{ sep, sep, case.file }) };
+        case_obj.expect_errors = .{ .contains = case.expected };
         test_step.dependOn(&case_obj.step);
     }
 }
