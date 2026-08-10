@@ -1,25 +1,10 @@
 const std = @import("std");
 
-/// The error must be AT the marked expression of this fragment: its path, as
-/// the compiler prints it, is the start of the error line. Used for the native
-/// compiler messages, whose tail is not stable (it can end in the mangled name
-/// of an anonymous struct) and cannot be matched verbatim. The separator is
-/// the one of the host (`/` on posix, `\` on windows), which is how the
-/// compiler prints it, so the cases match on either system; it is a comptime
-/// constant, so the whole path is concatenated at compile time.
 fn at(comptime file: []const u8) []const u8 {
     const sep = std.fs.path.sep_str;
-    return "test" ++ sep ++ "compile_errors" ++ sep ++ file ++ ":/?/";
+    return std.fmt.comptimePrint("test{s}compile_errors{s}{s}:/?/", .{ sep, sep, file });
 }
 
-/// Expected-compile-error cases: each file in test/compile_errors must FAIL
-/// to compile with a matching error (see Step.Compile.expect_errors). The
-/// match is per line: a plain string must be the END of some error line; with
-/// the /?/ wildcard the text before it must be the start of the line and the
-/// text after it the end (only the first /?/ of the line is a wildcard, and
-/// there is no regex: those two forms are the whole vocabulary). For the
-/// messages of the framework, which are ours and therefore stable, the full
-/// message is used; for the native ones, `at` (see above).
 const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }{
     .{ .file = "types_not_a_typedef.zig", .expected = "type 'text': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })" },
     .{ .file = "types_extra_property.zig", .expected = "type 'fecha': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })" },
@@ -46,12 +31,12 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // 1. Define standard zigma and aida modules
     const zigma_mod = b.addModule("zigma", .{
         .root_source_file = b.path("src/zigma.zig"),
         .target = target,
         .optimize = optimize,
     });
-
     const aida_mod = b.addModule("aida", .{
         .root_source_file = b.path("examples/aida.zig"),
         .target = target,
@@ -61,6 +46,7 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    // 2. Existing Test Suite Setup
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/aida_test.zig"),
@@ -93,4 +79,38 @@ pub fn build(b: *std.Build) void {
         case_obj.expect_errors = .{ .contains = case.expected };
         test_step.dependOn(&case_obj.step);
     }
+
+    // 3. Frontend WebAssembly Build Integration
+    buildFrontend(b, zigma_mod, aida_mod);
+}
+
+fn buildFrontend(b: *std.Build, zigma_mod: *std.Build.Module, aida_mod: *std.Build.Module) void {
+    const wasm_target = b.resolveTargetQuery(.{
+        .cpu_arch = .wasm32,
+        .os_tag = .freestanding,
+    });
+    const wasm_optimize = .ReleaseSmall;
+
+    // Use addExecutable instead of addLibrary to output a standalone .wasm file
+    const exe = b.addExecutable(.{
+        .name = "frontend",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("frontend/main.zig"),
+            .target = wasm_target,
+            .optimize = wasm_optimize,
+            .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
+                .{ .name = "aida", .module = aida_mod },
+            },
+        }),
+    });
+
+    exe.entry = .disabled;
+    exe.rdynamic = true;
+
+    b.installArtifact(exe);
+    b.default_step.dependOn(&exe.step);
+
+    const frontend_step = b.step("frontend", "Build the WASM frontend module");
+    frontend_step.dependOn(&exe.step);
 }
