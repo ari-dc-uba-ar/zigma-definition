@@ -44,6 +44,17 @@
         font: inherit;
         background: transparent;
       }
+      table.sheet td .object-fields {
+        display: flex;
+        gap: 0;
+      }
+      table.sheet td .object-fields input {
+        width: 5rem;
+        border-right: 1px solid #ccc;
+      }
+      table.sheet td .object-fields input:last-child {
+        border-right: none;
+      }
       table.sheet td input:read-only,
       table.sheet td input:disabled {
         background: #eee;

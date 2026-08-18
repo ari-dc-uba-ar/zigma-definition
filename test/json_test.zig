@@ -128,8 +128,31 @@ test "stringifies a catalog from a system that is not aida" {
     );
 }
 
-test "a struct of three integers is date storage" {
+test "a struct field is object storage with nested fields" {
     var buf: [2048]u8 = undefined;
     const json = try zigma_json.stringifyEntitySchema(aida.type_defs, "clases", aida.clases, &buf);
-    try std.testing.expect(std.mem.indexOf(u8, json, "{\"name\":\"fecha\",\"label\":\"fecha\",\"type\":\"fecha\",\"storage\":\"date\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "{\"name\":\"fecha\",\"label\":\"fecha\",\"type\":\"fecha\",\"storage\":\"object\",\"fields\":[{\"name\":\"año\",\"storage\":\"integer\"},{\"name\":\"mes\",\"storage\":\"integer\"},{\"name\":\"día\",\"storage\":\"integer\"}]}") != null);
+}
+
+test "parseFieldValue rejects a non-integer string" {
+    try std.testing.expectError(error.InvalidValue, zigma_json.parseFieldValue(i64, "abc"));
+    try std.testing.expectError(error.InvalidValue, zigma_json.parseFieldValue(i64, ""));
+}
+
+test "parseFieldValue parses an integer string" {
+    try std.testing.expect(try zigma_json.parseFieldValue(i64, "3") == 3);
+}
+
+test "parseFieldValue parses a struct from JSON object" {
+    const Stamp = struct { y: u16, m: u8, d: u8 };
+    const got = try zigma_json.parseFieldValue(Stamp, "{\"y\":2024,\"m\":3,\"d\":15}");
+    try std.testing.expect(got.y == 2024);
+    try std.testing.expect(got.m == 3);
+    try std.testing.expect(got.d == 15);
+}
+
+test "parseFieldValue rejects invalid struct JSON" {
+    const Stamp = struct { y: u16, m: u8, d: u8 };
+    try std.testing.expectError(error.InvalidValue, zigma_json.parseFieldValue(Stamp, "foo"));
+    try std.testing.expectError(error.InvalidValue, zigma_json.parseFieldValue(Stamp, "{\"y\":\"nope\",\"m\":3,\"d\":15}"));
 }

@@ -72,7 +72,7 @@ python3 -m http.server 8000 --directory zig-out/frontend
 
 Details: [docs/run-example.md](docs/run-example.md).
 
-WASM exports: `schema_ptr`, `schema_len`, `input_ptr`, `input_len`, `lengths_ptr`, `json_ptr`, `json_len`, `build_row`, `create_row`. JS import: `env.js_send_post`. After WASM load, JS builds a nav from the entity catalog (`stringifyEntityCatalog(type_defs, entity_defs)`), one table from `entity.fields`, then `GET /{entity}`. The empty last row POSTs a typed record instance of that entity's fields; **Save** on a tbody row `PUT`s `/{entity}?pk…` (pk cells locked); **Delete** sends `DELETE /{entity}?pk…` with no body. Identity is the named query (every pk field required). Backend keeps an in-memory JSON list per entity name (optional `system.seeds`); GET returns it, POST appends, PUT replaces the matching pk, DELETE removes it. The example app wires `src/system.zig` as `system`.
+WASM exports: `schema_ptr`, `schema_len`, `input_ptr`, `input_len`, `lengths_ptr`, `json_ptr`, `json_len`, `error_ptr`, `error_len`, `build_row`, `create_row`. JS import: `env.js_send_post`. After WASM load, JS builds a nav from the entity catalog (`stringifyEntityCatalog(type_defs, entity_defs)`), one table from `entity.fields`, then `GET /{entity}`. The empty last row POSTs a typed record instance of that entity's fields; **Save** on a tbody row `PUT`s `/{entity}?pk…` (pk cells locked); **Delete** sends `DELETE /{entity}?pk…` with no body. Identity is the named query (every pk field required). Backend keeps an in-memory JSON list per entity name (optional `system.seeds`); GET returns it, POST appends, PUT replaces the matching pk, DELETE removes it. The example app wires `src/system.zig` as `system`.
 
 ## Published package
 

@@ -3,7 +3,8 @@
 //! `stringifyRecordSchema` writes `[{name,label},...]` from a completed record Info.
 //! `stringifyEntitySchema` / `stringifyEntityCatalog` write entity Infos.
 //! Field `storage` is the Zig shape used by the page (`text`/`integer`/`boolean`/
-//! `date`/`object`), not the domain type name. A struct of three integers is `date`.
+//! `object`), not the domain type name. A struct is `object` with nested `fields`.
+//! `parseFieldValue` turns a cell string into that Zig type (structs as JSON objects).
 //!
 //! Generator: imports `zigma` only. Does not know any concrete system.
 
@@ -47,18 +48,6 @@ pub fn stringifyRecordSchema(rec_info: anytype, buf: []u8) error{NoSpaceLeft}![]
     return buf[0..pos];
 }
 
-/// A date is a struct of exactly three integer fields (year, month, day in
-/// declaration order). Domain type names are not consulted.
-pub fn isDateStruct(comptime T: type) bool {
-    const info = @typeInfo(T);
-    if (info != .@"struct" or info.@"struct".is_tuple) return false;
-    if (info.@"struct".field_names.len != 3) return false;
-    inline for (info.@"struct".field_types) |FieldType| {
-        if (@typeInfo(FieldType) != .int) return false;
-    }
-    return true;
-}
-
 pub fn fieldStorage(comptime T: type) []const u8 {
     switch (@typeInfo(T)) {
         .pointer => |p| {
@@ -67,7 +56,32 @@ pub fn fieldStorage(comptime T: type) []const u8 {
         },
         .int => return "integer",
         .bool => return "boolean",
-        .@"struct" => return if (isDateStruct(T)) "date" else "object",
+        .@"struct" => return "object",
+        else => @compileError("unsupported field type " ++ @typeName(T)),
+    }
+}
+
+/// Cell string → `T`. Structs are JSON objects with `T`'s field names.
+pub fn parseFieldValue(comptime T: type, bytes: []const u8) error{InvalidValue}!T {
+    switch (@typeInfo(T)) {
+        .pointer => |p| {
+            if (p.size == .slice and p.child == u8) return bytes;
+            @compileError("unsupported field type " ++ @typeName(T));
+        },
+        .int => return std.fmt.parseInt(T, bytes, 10) catch error.InvalidValue,
+        .bool => {
+            if (std.mem.eql(u8, bytes, "true")) return true;
+            if (std.mem.eql(u8, bytes, "false")) return false;
+            return error.InvalidValue;
+        },
+        .@"struct" => |s| {
+            if (s.is_tuple) @compileError("unsupported field type " ++ @typeName(T));
+            var buf: [4096]u8 = undefined;
+            var fba = std.heap.FixedBufferAllocator.init(&buf);
+            const parsed = std.json.parseFromSlice(T, fba.allocator(), bytes, .{}) catch return error.InvalidValue;
+            defer parsed.deinit();
+            return parsed.value;
+        },
         else => @compileError("unsupported field type " ++ @typeName(T)),
     }
 }
@@ -139,6 +153,34 @@ fn writeEntityFields(buf: []u8, pos: *usize, comptime type_defs: anytype, compti
         try writeJsonString(buf, pos, "storage");
         try writeByte(buf, pos, ':');
         try writeJsonString(buf, pos, fieldStorage(zig_type));
+        if (@typeInfo(zig_type) == .@"struct") {
+            try writeByte(buf, pos, ',');
+            try writeNestedFields(buf, pos, zig_type);
+        }
+        try writeByte(buf, pos, '}');
+    }
+    try writeByte(buf, pos, ']');
+}
+
+fn writeNestedFields(buf: []u8, pos: *usize, comptime T: type) error{NoSpaceLeft}!void {
+    const info = @typeInfo(T);
+    try writeJsonString(buf, pos, "fields");
+    try writeByte(buf, pos, ':');
+    try writeByte(buf, pos, '[');
+    inline for (info.@"struct".field_names, info.@"struct".field_types, 0..) |name, FieldType, i| {
+        if (i != 0) try writeByte(buf, pos, ',');
+        try writeByte(buf, pos, '{');
+        try writeJsonString(buf, pos, "name");
+        try writeByte(buf, pos, ':');
+        try writeJsonString(buf, pos, name);
+        try writeByte(buf, pos, ',');
+        try writeJsonString(buf, pos, "storage");
+        try writeByte(buf, pos, ':');
+        try writeJsonString(buf, pos, fieldStorage(FieldType));
+        if (@typeInfo(FieldType) == .@"struct") {
+            try writeByte(buf, pos, ',');
+            try writeNestedFields(buf, pos, FieldType);
+        }
         try writeByte(buf, pos, '}');
     }
     try writeByte(buf, pos, ']');

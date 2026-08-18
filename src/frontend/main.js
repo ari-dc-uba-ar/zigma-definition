@@ -22,28 +22,6 @@ function readWasmString(ptrFn, lenFn) {
     return readMemoryString(ptrFn(), lenFn());
 }
 
-function dateToInput(value) {
-    if (value == null || value === "") return "";
-    if (typeof value === "string") return value;
-    if (typeof value === "object") {
-        const parts = Object.values(value);
-        if (parts.length >= 3) {
-            const y = String(parts[0]).padStart(4, "0");
-            const m = String(parts[1]).padStart(2, "0");
-            const d = String(parts[2]).padStart(2, "0");
-            return `${y}-${m}-${d}`;
-        }
-    }
-    return "";
-}
-
-function displayValue(field, value) {
-    if (field.storage === "date") return dateToInput(value);
-    if (field.storage === "boolean") return value;
-    if (value == null) return "";
-    return value;
-}
-
 function isPkField(field) {
     return currentEntity.pk.includes(field.name);
 }
@@ -54,7 +32,7 @@ function fieldByName(name) {
 
 function pkString(name, value) {
     const field = fieldByName(name);
-    if (field && field.storage === "date") return dateToInput(value);
+    if (field && field.storage === "object") return JSON.stringify(value ?? {});
     if (field && field.storage === "boolean") return value === true || value === "true" ? "true" : "false";
     if (value == null) return "";
     return String(value);
@@ -69,6 +47,16 @@ function resourceUrl(entity, row) {
 }
 
 function makeInput(field, value, locked) {
+    if (field.storage === "object" && field.fields) {
+        const wrap = document.createElement("div");
+        wrap.className = "object-fields";
+        wrap.dataset.field = field.name;
+        const obj = value && typeof value === "object" ? value : {};
+        for (const sub of field.fields) {
+            wrap.appendChild(makeInput(sub, obj[sub.name], locked));
+        }
+        return wrap;
+    }
     const input = document.createElement("input");
     input.dataset.field = field.name;
     input.autocomplete = "off";
@@ -78,9 +66,6 @@ function makeInput(field, value, locked) {
     } else if (field.storage === "boolean") {
         input.type = "checkbox";
         input.checked = value === true || value === "true";
-    } else if (field.storage === "date") {
-        input.type = "date";
-        input.value = dateToInput(value);
     } else {
         input.type = "text";
         input.value = value ?? "";
@@ -93,9 +78,40 @@ function makeInput(field, value, locked) {
     return input;
 }
 
-function readInput(input, field) {
+function readLeaf(root, field) {
+    if (field.storage === "object" && field.fields) {
+        const wrap = root.matches?.(`[data-field="${field.name}"].object-fields`)
+            ? root
+            : root.querySelector(`[data-field="${field.name}"].object-fields`);
+        const obj = {};
+        for (const sub of field.fields) {
+            obj[sub.name] = readLeaf(wrap ?? root, sub);
+        }
+        return obj;
+    }
+    const input = root.querySelector(`input[data-field="${field.name}"]`);
+    if (field.storage === "boolean") return input.checked;
+    if (field.storage === "integer") {
+        if (!input.value) return "";
+        const n = Number(input.value);
+        return Number.isFinite(n) ? n : input.value;
+    }
+    return input.value ?? "";
+}
+
+function readFieldValue(td, field) {
+    if (field.storage === "object" && field.fields) {
+        return JSON.stringify(readLeaf(td, field));
+    }
+    const input = td.querySelector(`input[data-field="${field.name}"]`);
     if (field.storage === "boolean") return input.checked ? "true" : "false";
     return input.value ?? "";
+}
+
+function rowBuildError() {
+    const len = wasmExports.error_len();
+    if (!len) return "error: could not build row JSON";
+    return readMemoryString(wasmExports.error_ptr(), len);
 }
 
 function entityIndex() {
@@ -131,7 +147,7 @@ function buildTable(entity) {
     newRow.id = "new-row";
     for (const field of fields) {
         const td = document.createElement("td");
-        td.appendChild(makeInput(field, field.storage === "boolean" ? false : ""));
+        td.appendChild(makeInput(field, field.storage === "boolean" ? false : field.storage === "object" ? {} : ""));
         newRow.appendChild(td);
     }
     const action = document.createElement("td");
@@ -145,15 +161,13 @@ function buildTable(entity) {
     table.tFoot.replaceChildren(newRow);
 
     button.addEventListener("click", () => {
-        const values = fields.map((field) => {
-            const input = document.querySelector(`#new-row input[data-field="${field.name}"]`);
-            return readInput(input, field);
-        });
+        const values = fields.map((field, i) => readFieldValue(newRow.children[i], field));
         try {
             writeInputStrings(values);
-            wasmExports.create_row(entityIndex());
+            const len = wasmExports.create_row(entityIndex());
+            if (!len) throw new Error(rowBuildError());
         } catch (err) {
-            document.getElementById("status").textContent = String(err);
+            document.getElementById("status").textContent = err instanceof Error ? err.message : String(err);
         }
     });
 }
@@ -166,7 +180,7 @@ function fillTable(rows) {
         const tr = document.createElement("tr");
         for (const field of fields) {
             const td = document.createElement("td");
-            td.appendChild(makeInput(field, displayValue(field, row[field.name]), isPkField(field)));
+            td.appendChild(makeInput(field, row[field.name], isPkField(field)));
             tr.appendChild(td);
         }
         const action = document.createElement("td");
@@ -187,10 +201,7 @@ function fillTable(rows) {
 }
 
 function rowValuesFrom(tr) {
-    return currentEntity.fields.map((field) => {
-        const input = tr.querySelector(`input[data-field="${field.name}"]`);
-        return readInput(input, field);
-    });
+    return currentEntity.fields.map((field, i) => readFieldValue(tr.children[i], field));
 }
 
 async function saveRow(tr, row) {
@@ -198,11 +209,11 @@ async function saveRow(tr, row) {
     try {
         writeInputStrings(rowValuesFrom(tr));
         const len = wasmExports.build_row(entityIndex());
-        if (!len) throw new Error("could not build row JSON");
+        if (!len) throw new Error(rowBuildError());
         const jsonString = readMemoryString(wasmExports.json_ptr(), len);
         await sendJson(resourceUrl(currentEntity, row), "PUT", jsonString);
     } catch (err) {
-        status.textContent = String(err);
+        status.textContent = err instanceof Error ? err.message : String(err);
     }
 }
 

@@ -63,9 +63,9 @@ On first read of `schema_ptr` / `schema_len`, WASM fills a buffer with
 - `name`
 - `pk`, `uks`, `fks`
 - `fields`: `{ name, label, type, storage }` per field. `type` is the domain
-  type name; `storage` is the Zig shape (`text`, `integer`, `boolean`, `date`,
-  `object`). A struct of three integers is `date` (year, month, day in field
-  order).
+  type name; `storage` is the Zig shape (`text`, `integer`, `boolean`,
+  `object`). A struct also has nested `fields` (`name` + `storage`) from its
+  Zig type. The cell string for a struct is that JSON object.
 
 That catalog is the only schema the page uses. JS never imports a concrete
 system.
@@ -77,13 +77,13 @@ The other exports are a packed-string row builder, not UI:
 | `schema_ptr` / `schema_len` | catalog JSON |
 | `input_ptr` / `input_len` | packed field strings from the page |
 | `lengths_ptr` | per-field lengths into `input_buf` |
-| `build_row(entity_index)` | parse into `RecordInstanceType` of that entity's `.fields`, write JSON |
+| `build_row(entity_index)` | `parseFieldValue` into `RecordInstanceType`; 0 if a cell is not a value of that Zig type |
 | `json_ptr` / `json_len` | last built row (for PUT) |
-| `create_row(entity_index)` | `build_row` then `env.js_send_post` |
+| `error_ptr` / `error_len` | last build error (`error: orden: not integer`) |
+| `create_row(entity_index)` | `build_row` then `env.js_send_post`; returns the JSON length (0 on failure) |
 
 `entity_index` is the order of fields on `entity_defs` (the same order as the
-catalog array). Date structs are parsed from `YYYY-MM-DD` into the three
-integer fields in declaration order.
+catalog array).
 
 ## What JS builds in the browser
 
@@ -95,16 +95,19 @@ After `WebAssembly.instantiateStreaming(fetch("frontend.wasm"), …)`, `main.js`
    empty alta row, tbody filled from `GET /{entity}`. With no hash, the first
    catalog entity is selected.
 4. Chooses `<input>` widgets from `field.storage` (`integer` → number,
-   `boolean` → checkbox, `date` → date, else text).
+   `boolean` → checkbox, `object` → nested inputs per subfield, else text).
 
 **Post** (tfoot) packs the empty-row values into WASM memory and calls
 `create_row`. Zig builds a typed record instance, `stringifyRecord`s it, and
-calls `js_send_post`, which `fetch`es `POST /{entity}`.
+calls `js_send_post`, which `fetch`es `POST /{entity}`. If a cell is not a
+value of the field’s Zig type, `create_row` returns 0 and the page shows
+`error: {field}: not {storage}` from `error_ptr`.
 
 **Save** (tbody) calls `build_row` and `PUT /{entity}?pk…`. The HTTP backend
 replaces the row whose pk matches the query (body pk must match). Pk cells on
 those rows are locked. **Delete** sends `DELETE /{entity}?pk…` with no body;
-the backend removes the matching pk. The query names every pk field.
+the backend removes the matching pk. The query names every pk field (struct
+values as JSON).
 
 On success the page GETs the list again. The table is rebuilt from the catalog
 plus that JSON; nothing is written to disk.

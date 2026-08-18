@@ -205,35 +205,8 @@ fn freeQuery(gpa: std.mem.Allocator, pairs: []QueryPair) void {
 
 const PkQueryError = error{ MissingPk, ExtraQuery, DuplicatePk, InvalidPk };
 
-fn parseDateStruct(comptime T: type, s: []const u8) error{InvalidValue}!T {
-    const names = @typeInfo(T).@"struct".field_names;
-    if (names.len != 3 or s.len < 10) return error.InvalidValue;
-    var result: T = undefined;
-    @field(result, names[0]) = std.fmt.parseInt(@FieldType(T, names[0]), s[0..4], 10) catch return error.InvalidValue;
-    @field(result, names[1]) = std.fmt.parseInt(@FieldType(T, names[1]), s[5..7], 10) catch return error.InvalidValue;
-    @field(result, names[2]) = std.fmt.parseInt(@FieldType(T, names[2]), s[8..10], 10) catch return error.InvalidValue;
-    return result;
-}
-
-fn parsePkValue(comptime T: type, s: []const u8) error{InvalidValue}!T {
-    switch (@typeInfo(T)) {
-        .pointer => |p| {
-            if (p.size == .slice and p.child == u8) return s;
-            @compileError("unsupported field type " ++ @typeName(T));
-        },
-        .int => return std.fmt.parseInt(T, s, 10) catch error.InvalidValue,
-        .bool => {
-            if (std.mem.eql(u8, s, "true")) return true;
-            if (std.mem.eql(u8, s, "false")) return false;
-            return error.InvalidValue;
-        },
-        .@"struct" => return parseDateStruct(T, s),
-        else => @compileError("unsupported field type " ++ @typeName(T)),
-    }
-}
-
 fn parseQueryValue(comptime T: type, raw: []const u8) PkQueryError!T {
-    return parsePkValue(T, raw) catch error.InvalidPk;
+    return zigma_json.parseFieldValue(T, raw) catch error.InvalidPk;
 }
 
 fn pkFromQuery(comptime entity: anytype, pairs: []const QueryPair) PkQueryError!zigma.RecordInstanceType(system.type_defs, zigma.extractPk(entity)) {
