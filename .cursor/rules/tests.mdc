@@ -1,0 +1,28 @@
+---
+description: Runtime tests and expected compile-error cases
+globs: test/**/*.zig,build.zig
+alwaysApply: false
+---
+
+# Tests
+
+`zig build test` runs `test/aida_test.zig`, `test/json_test.zig`, and every row of `compile_error_cases` in `build.zig`.
+
+**Positive:** add a `test "..."` in `test/aida_test.zig` (or `test/json_test.zig` for stringify). Use `std.testing.expect` / `expectEqualStrings`. Existing helpers: `expectNames`, `fieldNames`. Comptime checks: `comptime std.debug.assert(...)`. JSON generators that must not know aida: extend `test/tiny_system.zig` and assert in `test/json_test.zig`.
+
+**Rejection (must not compile):** new `test/compile_errors/<file>.zig` plus one entry in `compile_error_cases`:
+
+```zig
+.{ .file = "the_file.zig", .expected = "exact compileError text" },
+```
+
+`expect_errors = .{ .contains = ... }` matches **a whole error line**:
+
+- Framework `@compileError`: put the full message (the line ends with that text).
+- Unstable native compiler errors: `at("the_file.zig")`, which prefixes `test/compile_errors/the_file.zig:/?/` with the host path separator.
+
+Only the first `/?/` on a line is a wildcard (prefix + suffix). No regex.
+
+Fragments import `zigma` and often `aida`. They are compiled as objects, not run.
+
+TDD: show the red test and wait for review before implementing.
