@@ -27,7 +27,7 @@ python3 -m http.server 8000 --directory zig-out/frontend
 
 **Browser:** open <http://localhost:8000/>. After WASM loads, a nav of entity names appears and the first catalog entity is shown (in aida, `docentes`), then filled from `GET /{entity}`, plus an empty row at the bottom. Open `#materias` for that table (labels `materia` / `denominación`). Fill that last row and click **Post**. You should see `{"status":"received"}` on the page, the backend should print the JSON, the new row should appear in the table, and the last row should be empty again for the next alta. **Save** on an existing row sends `PUT /{entity}?pk…` and replaces that row (pk cells are locked). **Delete** sends `DELETE /{entity}?pk…` with no body. Other entities are the same at `#docentes`, `#clases`, etc. The lists live in the backend process only (restarting it restores the seeds).
 
-Seeds exist for periodos, materias, docentes, alumnos, cursos, and clases. The rest of the nav is empty until you POST.
+Every entity is seeded with at least two rows (FKs point at those pks). Restarting the backend restores the seeds.
 
 ## 1. Build the frontend
 
@@ -59,7 +59,7 @@ Or, after `zig build`, run the installed binary:
 
 It listens on `http://localhost:8080`. CORS is enabled so the page on another origin can call it.
 
-- `GET /{entity}` returns the in-memory list for that entity as a JSON array. `src/system.zig` seeds periodos, materias, docentes, alumnos, cursos, and clases. Other GET paths are `404`.
+- `GET /{entity}` returns the in-memory list for that entity as a JSON array. `src/system.zig` seeds every entity with at least two rows. Other GET paths are `404`.
 - `POST /{entity}` prints the request, parses a record instance, appends it, and answers `{"status": "received"}`.
 - `PUT /{entity}?k=v&…` prints the request, replaces the row whose pk matches the query (body pk must match; every pk field required), and answers `{"status": "received"}` (or 404 if that pk is missing).
 - `DELETE /{entity}?k=v&…` prints the request, removes the row whose pk matches the query (no body; full pk required), and answers `{"status": "received"}` (or 404 if that pk is missing).
