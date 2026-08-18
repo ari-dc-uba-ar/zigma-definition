@@ -18,7 +18,7 @@ const cors_origin = std.http.Header{
 
 const cors_methods = std.http.Header{
     .name = "Access-Control-Allow-Methods",
-    .value = "POST, PUT, GET, OPTIONS",
+    .value = "POST, PUT, DELETE, GET, OPTIONS",
 };
 
 const cors_headers = std.http.Header{
@@ -64,7 +64,8 @@ pub fn main() !void {
     while (true) {
         const stream = try tcp_server.accept(io);
         handleConnection(gpa, io, stdout, stream, &lists) catch |err| {
-            std.debug.print("connection error: {t}\n", .{err});
+            stdout.print("error: {t}\n", .{err}) catch {};
+            stdout.flush() catch {};
         };
         stream.close(io);
     }
@@ -119,14 +120,22 @@ fn handleRequest(
         .OPTIONS => try request.respond("", .{
             .extra_headers = &.{ cors_origin, cors_methods, cors_headers },
         }),
-        .GET => try handleGet(stdout, request, lists),
+        .GET => try handleGet(gpa, stdout, request, lists),
         .POST => try handleWrite(gpa, stdout, request, lists, .post),
         .PUT => try handleWrite(gpa, stdout, request, lists, .put),
-        else => try request.respond("Not Implemented", .{
-            .status = .not_implemented,
-            .extra_headers = &.{cors_origin},
-        }),
+        .DELETE => try handleWrite(gpa, stdout, request, lists, .delete),
+        else => {
+            try stdout.print("{t}\n", .{request.head.method});
+            try stdout.print("error: not implemented\n", .{});
+            try reply(stdout, request, .not_implemented, "Not Implemented", &.{cors_origin});
+        },
     }
+}
+
+fn splitTarget(target: []const u8) struct { path: []const u8, query: []const u8 } {
+    const q = std.mem.indexOfScalar(u8, target, '?') orelse
+        return .{ .path = target, .query = "" };
+    return .{ .path = target[0..q], .query = target[q + 1 ..] };
 }
 
 fn entityNameOf(path: []const u8) ?[]const u8 {
@@ -134,6 +143,128 @@ fn entityNameOf(path: []const u8) ?[]const u8 {
     const rest = path[1..];
     if (rest.len == 0 or std.mem.indexOfScalar(u8, rest, '/') != null) return null;
     return rest;
+}
+
+const QueryPair = struct {
+    name_buf: []u8,
+    value_buf: []u8,
+    name: []const u8,
+    value: []const u8,
+};
+
+fn decodeComponent(gpa: std.mem.Allocator, encoded: []const u8) !QueryPair {
+    const name_src, const value_src = blk: {
+        if (std.mem.indexOfScalar(u8, encoded, '=')) |eq| {
+            break :blk .{ encoded[0..eq], encoded[eq + 1 ..] };
+        }
+        break :blk .{ encoded, "" };
+    };
+    const name_buf = try gpa.dupe(u8, name_src);
+    errdefer gpa.free(name_buf);
+    for (name_buf) |*c| {
+        if (c.* == '+') c.* = ' ';
+    }
+    const value_buf = try gpa.dupe(u8, value_src);
+    errdefer gpa.free(value_buf);
+    for (value_buf) |*c| {
+        if (c.* == '+') c.* = ' ';
+    }
+    return .{
+        .name_buf = name_buf,
+        .value_buf = value_buf,
+        .name = std.Uri.percentDecodeInPlace(name_buf),
+        .value = std.Uri.percentDecodeInPlace(value_buf),
+    };
+}
+
+fn parseQuery(gpa: std.mem.Allocator, query: []const u8) ![]QueryPair {
+    var list: std.ArrayList(QueryPair) = .empty;
+    errdefer {
+        for (list.items) |pair| {
+            gpa.free(pair.name_buf);
+            gpa.free(pair.value_buf);
+        }
+        list.deinit(gpa);
+    }
+    if (query.len == 0) return list.toOwnedSlice(gpa);
+    var it = std.mem.splitScalar(u8, query, '&');
+    while (it.next()) |raw| {
+        if (raw.len == 0) continue;
+        try list.append(gpa, try decodeComponent(gpa, raw));
+    }
+    return list.toOwnedSlice(gpa);
+}
+
+fn freeQuery(gpa: std.mem.Allocator, pairs: []QueryPair) void {
+    for (pairs) |pair| {
+        gpa.free(pair.name_buf);
+        gpa.free(pair.value_buf);
+    }
+    gpa.free(pairs);
+}
+
+const PkQueryError = error{ MissingPk, ExtraQuery, DuplicatePk, InvalidPk };
+
+fn parseDateStruct(comptime T: type, s: []const u8) error{InvalidValue}!T {
+    const names = @typeInfo(T).@"struct".field_names;
+    if (names.len != 3 or s.len < 10) return error.InvalidValue;
+    var result: T = undefined;
+    @field(result, names[0]) = std.fmt.parseInt(@FieldType(T, names[0]), s[0..4], 10) catch return error.InvalidValue;
+    @field(result, names[1]) = std.fmt.parseInt(@FieldType(T, names[1]), s[5..7], 10) catch return error.InvalidValue;
+    @field(result, names[2]) = std.fmt.parseInt(@FieldType(T, names[2]), s[8..10], 10) catch return error.InvalidValue;
+    return result;
+}
+
+fn parsePkValue(comptime T: type, s: []const u8) error{InvalidValue}!T {
+    switch (@typeInfo(T)) {
+        .pointer => |p| {
+            if (p.size == .slice and p.child == u8) return s;
+            @compileError("unsupported field type " ++ @typeName(T));
+        },
+        .int => return std.fmt.parseInt(T, s, 10) catch error.InvalidValue,
+        .bool => {
+            if (std.mem.eql(u8, s, "true")) return true;
+            if (std.mem.eql(u8, s, "false")) return false;
+            return error.InvalidValue;
+        },
+        .@"struct" => return parseDateStruct(T, s),
+        else => @compileError("unsupported field type " ++ @typeName(T)),
+    }
+}
+
+fn parseQueryValue(comptime T: type, raw: []const u8) PkQueryError!T {
+    return parsePkValue(T, raw) catch error.InvalidPk;
+}
+
+fn pkFromQuery(comptime entity: anytype, pairs: []const QueryPair) PkQueryError!zigma.RecordInstanceType(system.type_defs, zigma.extractPk(entity)) {
+    const Pk = zigma.RecordInstanceType(system.type_defs, zigma.extractPk(entity));
+    var pk: Pk = undefined;
+    var seen: [entity.pk.len]bool = @splat(false);
+    for (pairs) |pair| {
+        var found = false;
+        inline for (entity.pk, 0..) |name, i| {
+            if (std.mem.eql(u8, pair.name, name)) {
+                if (seen[i]) return error.DuplicatePk;
+                seen[i] = true;
+                found = true;
+                @field(pk, name) = try parseQueryValue(@TypeOf(@field(pk, name)), pair.value);
+            }
+        }
+        if (!found) return error.ExtraQuery;
+    }
+    for (seen) |s| {
+        if (!s) return error.MissingPk;
+    }
+    return pk;
+}
+
+fn pkQueryMessage(err: PkQueryError) []const u8 {
+    return switch (err) {
+        error.MissingPk => "pk required",
+        error.ExtraQuery => "extra query",
+        error.DuplicatePk => "duplicate pk",
+        error.InvalidPk => "invalid pk",
+    };
 }
 
 fn listFor(lists: *[entity_count]std.ArrayList([]const u8), name: []const u8) ?*std.ArrayList([]const u8) {
@@ -164,28 +295,69 @@ fn joinJsonArray(items: []const []const u8, buf: []u8) error{NoSpaceLeft}![]cons
     return buf[0..pos];
 }
 
+fn printRequest(gpa: std.mem.Allocator, stdout: *std.Io.Writer, method: []const u8, target: []const u8, body: []const u8) !void {
+    try stdout.print("{s} {s}\n", .{ method, target });
+    if (body.len == 0) {
+        try stdout.flush();
+        return;
+    }
+    if (std.json.parseFromSlice(std.json.Value, gpa, body, .{})) |parsed| {
+        defer parsed.deinit();
+        try stdout.print("{f}\n", .{std.json.fmt(parsed.value, .{ .whitespace = .indent_2 })});
+    } else |_| {
+        try stdout.print("{s}\n", .{body});
+    }
+    try stdout.flush();
+}
+
+fn printErr(stdout: *std.Io.Writer, msg: []const u8) !void {
+    try stdout.print("error: {s}\n", .{msg});
+    try stdout.flush();
+}
+
+fn reply(
+    stdout: *std.Io.Writer,
+    request: *std.http.Server.Request,
+    status: std.http.Status,
+    body: []const u8,
+    extra_headers: []const std.http.Header,
+) !void {
+    try stdout.print("{d} {s}\n", .{ @intFromEnum(status), body });
+    try stdout.flush();
+    try request.respond(body, .{
+        .status = status,
+        .extra_headers = extra_headers,
+    });
+}
+
 fn handleGet(
+    gpa: std.mem.Allocator,
     stdout: *std.Io.Writer,
     request: *std.http.Server.Request,
     lists: *[entity_count]std.ArrayList([]const u8),
 ) !void {
-    try stdout.print("\n--- INCOMING HTTP GET REQUEST: {s} ---\n", .{request.head.target});
-    try stdout.flush();
+    try printRequest(gpa, stdout, "GET", request.head.target, "");
 
-    const name = entityNameOf(request.head.target) orelse {
-        try request.respond("Not Found", .{ .status = .not_found, .extra_headers = &.{cors_origin} });
+    const parts = splitTarget(request.head.target);
+    if (parts.query.len != 0) {
+        try printErr(stdout, "unexpected query");
+        try reply(stdout, request, .bad_request, "{\"status\":\"invalid\"}", &.{ json_content_type, cors_origin });
+        return;
+    }
+    const name = entityNameOf(parts.path) orelse {
+        try printErr(stdout, "not found");
+        try reply(stdout, request, .not_found, "Not Found", &.{cors_origin});
         return;
     };
     const list = listFor(lists, name) orelse {
-        try request.respond("Not Found", .{ .status = .not_found, .extra_headers = &.{cors_origin} });
+        try printErr(stdout, "not found");
+        try reply(stdout, request, .not_found, "Not Found", &.{cors_origin});
         return;
     };
 
     var json_buf: [65536]u8 = undefined;
     const json = try joinJsonArray(list.items, &json_buf);
-    try request.respond(json, .{
-        .extra_headers = &.{ json_content_type, cors_origin },
-    });
+    try reply(stdout, request, .ok, json, &.{ json_content_type, cors_origin });
 }
 
 fn valuesEqual(a: anytype, b: @TypeOf(a)) bool {
@@ -216,6 +388,7 @@ fn replaceByPk(
     gpa: std.mem.Allocator,
     list: *std.ArrayList([]const u8),
     comptime entity: anytype,
+    url_pk: anytype,
     new_row: anytype,
 ) !bool {
     const Row = @TypeOf(new_row);
@@ -224,7 +397,7 @@ fn replaceByPk(
     for (list.items, 0..) |old_json, i| {
         const parsed = std.json.parseFromSlice(Row, gpa, old_json, .{}) catch continue;
         defer parsed.deinit();
-        if (pkEqual(entity, parsed.value, new_row)) {
+        if (pkEqual(entity, parsed.value, url_pk)) {
             gpa.free(old_json);
             list.items[i] = try gpa.dupe(u8, json);
             return true;
@@ -233,47 +406,75 @@ fn replaceByPk(
     return false;
 }
 
+fn removeByPk(
+    gpa: std.mem.Allocator,
+    list: *std.ArrayList([]const u8),
+    comptime entity: anytype,
+    url_pk: anytype,
+) bool {
+    const Row = zigma.RecordInstanceType(system.type_defs, entity.fields);
+    for (list.items, 0..) |old_json, i| {
+        const parsed = std.json.parseFromSlice(Row, gpa, old_json, .{}) catch continue;
+        defer parsed.deinit();
+        if (pkEqual(entity, parsed.value, url_pk)) {
+            gpa.free(old_json);
+            _ = list.orderedRemove(i);
+            return true;
+        }
+    }
+    return false;
+}
+
+fn requestReader(request: *std.http.Server.Request, buffer: []u8) std.http.Server.Request.ExpectContinueError!*std.Io.Reader {
+    const transfer_encoding = request.head.transfer_encoding;
+    const content_length = request.head.content_length;
+    const advertised = content_length != null or transfer_encoding == .chunked;
+    if (advertised) {
+        const flush = request.head.expect != null;
+        try request.writeExpectContinue();
+        if (flush) try request.server.out.flush();
+        return request.server.reader.bodyReader(buffer, transfer_encoding, content_length);
+    }
+    return request.readerExpectContinue(buffer);
+}
+
 fn handleWrite(
     gpa: std.mem.Allocator,
     stdout: *std.Io.Writer,
     request: *std.http.Server.Request,
     lists: *[entity_count]std.ArrayList([]const u8),
-    kind: enum { post, put },
+    kind: enum { post, put, delete },
 ) !void {
     var path_buf: [1024]u8 = undefined;
     if (request.head.target.len > path_buf.len) return error.TargetTooLong;
     const path = path_buf[0..request.head.target.len];
     @memcpy(path, request.head.target);
 
-    const label = if (kind == .post) "POST" else "PUT";
-    try stdout.print("\n--- INCOMING HTTP {s} REQUEST ---\n", .{label});
-    try stdout.print("Path: {s}\n", .{path});
-    try stdout.print("Headers:\n", .{});
-    var headers = request.iterateHeaders();
-    while (headers.next()) |header| {
-        if (headers.is_trailer) break;
-        try stdout.print("{s}: {s}\n", .{ header.name, header.value });
-    }
-    try stdout.print("\nBody Payload:\n", .{});
+    const label = switch (kind) {
+        .post => "POST",
+        .put => "PUT",
+        .delete => "DELETE",
+    };
 
     var body_buf: [4096]u8 = undefined;
-    const body_reader = try request.readerExpectContinue(&body_buf);
+    const body_reader = try requestReader(request, &body_buf);
     const body = try body_reader.allocRemaining(gpa, .unlimited);
     defer gpa.free(body);
 
-    if (std.json.parseFromSlice(std.json.Value, gpa, body, .{})) |parsed| {
-        defer parsed.deinit();
-        try stdout.print("{f}\n", .{std.json.fmt(parsed.value, .{ .whitespace = .indent_2 })});
-    } else |_| {
-        try stdout.print("{s}\n", .{body});
-    }
-    try stdout.print("----------------------------------\n\n", .{});
-    try stdout.flush();
+    try printRequest(gpa, stdout, label, path, if (kind == .delete) "" else body);
 
-    const name = entityNameOf(path) orelse {
-        try request.respond("Not Found", .{ .status = .not_found, .extra_headers = &.{cors_origin} });
+    const parts = splitTarget(path);
+    const name = entityNameOf(parts.path) orelse {
+        try printErr(stdout, "not found");
+        try reply(stdout, request, .not_found, "Not Found", &.{cors_origin});
         return;
     };
+
+    if (kind == .post and parts.query.len != 0) {
+        try printErr(stdout, "unexpected query");
+        try reply(stdout, request, .bad_request, "{\"status\":\"invalid\"}", &.{ json_content_type, cors_origin });
+        return;
+    }
 
     var matched = false;
     @setEvalBranchQuota(10000);
@@ -281,35 +482,57 @@ fn handleWrite(
         if (std.mem.eql(u8, name, n)) {
             matched = true;
             const entity = @field(system.entity_defs, n);
-            const Row = zigma.RecordInstanceType(system.type_defs, entity.fields);
-            const parsed = std.json.parseFromSlice(Row, gpa, body, .{}) catch {
-                try request.respond("{\"status\":\"invalid\"}", .{
-                    .status = .bad_request,
-                    .extra_headers = &.{ json_content_type, cors_origin },
-                });
-                return;
-            };
-            defer parsed.deinit();
             if (kind == .post) {
+                const Row = zigma.RecordInstanceType(system.type_defs, entity.fields);
+                const parsed = std.json.parseFromSlice(Row, gpa, body, .{}) catch {
+                    try printErr(stdout, "invalid json");
+                    try reply(stdout, request, .bad_request, "{\"status\":\"invalid\"}", &.{ json_content_type, cors_origin });
+                    return;
+                };
+                defer parsed.deinit();
                 try appendJson(gpa, &lists[i], parsed.value);
             } else {
-                const replaced = try replaceByPk(gpa, &lists[i], entity, parsed.value);
-                if (!replaced) {
-                    try request.respond("{\"status\":\"not found\"}", .{
-                        .status = .not_found,
-                        .extra_headers = &.{ json_content_type, cors_origin },
-                    });
+                const pairs = try parseQuery(gpa, parts.query);
+                defer freeQuery(gpa, pairs);
+                const url_pk = pkFromQuery(entity, pairs) catch |err| {
+                    try printErr(stdout, pkQueryMessage(err));
+                    try reply(stdout, request, .bad_request, "{\"status\":\"invalid\"}", &.{ json_content_type, cors_origin });
                     return;
+                };
+                if (kind == .put) {
+                    const Row = zigma.RecordInstanceType(system.type_defs, entity.fields);
+                    const parsed = std.json.parseFromSlice(Row, gpa, body, .{}) catch {
+                        try printErr(stdout, "invalid json");
+                        try reply(stdout, request, .bad_request, "{\"status\":\"invalid\"}", &.{ json_content_type, cors_origin });
+                        return;
+                    };
+                    defer parsed.deinit();
+                    if (!pkEqual(entity, parsed.value, url_pk)) {
+                        try printErr(stdout, "pk mismatch");
+                        try reply(stdout, request, .bad_request, "{\"status\":\"invalid\"}", &.{ json_content_type, cors_origin });
+                        return;
+                    }
+                    const replaced = try replaceByPk(gpa, &lists[i], entity, url_pk, parsed.value);
+                    if (!replaced) {
+                        try printErr(stdout, "not found");
+                        try reply(stdout, request, .not_found, "{\"status\":\"not found\"}", &.{ json_content_type, cors_origin });
+                        return;
+                    }
+                } else {
+                    if (!removeByPk(gpa, &lists[i], entity, url_pk)) {
+                        try printErr(stdout, "not found");
+                        try reply(stdout, request, .not_found, "{\"status\":\"not found\"}", &.{ json_content_type, cors_origin });
+                        return;
+                    }
                 }
             }
         }
     }
     if (!matched) {
-        try request.respond("Not Found", .{ .status = .not_found, .extra_headers = &.{cors_origin} });
+        try printErr(stdout, "not found");
+        try reply(stdout, request, .not_found, "Not Found", &.{cors_origin});
         return;
     }
 
-    try request.respond("{\"status\": \"received\"}", .{
-        .extra_headers = &.{ json_content_type, cors_origin },
-    });
+    try reply(stdout, request, .ok, "{\"status\": \"received\"}", &.{ json_content_type, cors_origin });
 }

@@ -44,10 +44,19 @@
         font: inherit;
         background: transparent;
       }
+      table.sheet td input:read-only,
+      table.sheet td input:disabled {
+        background: #eee;
+        color: #444;
+      }
       table.sheet td.action {
         border: none;
         padding: 0 0.4rem;
         vertical-align: middle;
+        white-space: nowrap;
+      }
+      table.sheet td.action button + button {
+        margin-left: 0.3rem;
       }
     </style>
   </head>

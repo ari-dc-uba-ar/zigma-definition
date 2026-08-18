@@ -8,7 +8,7 @@ const importObject = {
     env: {
         js_send_post: async (ptr, len) => {
             const jsonString = readMemoryString(ptr, len);
-            await sendRow("POST", jsonString);
+            await sendJson(`${apiBase}/${currentEntity.name}`, "POST", jsonString);
         }
     }
 };
@@ -44,7 +44,31 @@ function displayValue(field, value) {
     return value;
 }
 
-function makeInput(field, value) {
+function isPkField(field) {
+    return currentEntity.pk.includes(field.name);
+}
+
+function fieldByName(name) {
+    return currentEntity.fields.find((field) => field.name === name);
+}
+
+function pkString(name, value) {
+    const field = fieldByName(name);
+    if (field && field.storage === "date") return dateToInput(value);
+    if (field && field.storage === "boolean") return value === true || value === "true" ? "true" : "false";
+    if (value == null) return "";
+    return String(value);
+}
+
+function resourceUrl(entity, row) {
+    const query = new URLSearchParams();
+    for (const name of entity.pk) {
+        query.set(name, pkString(name, row[name]));
+    }
+    return `${apiBase}/${entity.name}?${query}`;
+}
+
+function makeInput(field, value, locked) {
     const input = document.createElement("input");
     input.dataset.field = field.name;
     input.autocomplete = "off";
@@ -60,6 +84,11 @@ function makeInput(field, value) {
     } else {
         input.type = "text";
         input.value = value ?? "";
+    }
+    if (locked) {
+        if (field.storage === "boolean") input.disabled = true;
+        else input.readOnly = true;
+        input.tabIndex = -1;
     }
     return input;
 }
@@ -137,16 +166,21 @@ function fillTable(rows) {
         const tr = document.createElement("tr");
         for (const field of fields) {
             const td = document.createElement("td");
-            td.appendChild(makeInput(field, displayValue(field, row[field.name])));
+            td.appendChild(makeInput(field, displayValue(field, row[field.name]), isPkField(field)));
             tr.appendChild(td);
         }
         const action = document.createElement("td");
         action.className = "action";
-        const button = document.createElement("button");
-        button.type = "button";
-        button.textContent = "Save";
-        button.addEventListener("click", () => saveRow(tr));
-        action.appendChild(button);
+        const save = document.createElement("button");
+        save.type = "button";
+        save.textContent = "Save";
+        save.addEventListener("click", () => saveRow(tr, row));
+        const del = document.createElement("button");
+        del.type = "button";
+        del.textContent = "Delete";
+        del.addEventListener("click", () => deleteRow(row));
+        action.appendChild(save);
+        action.appendChild(del);
         tr.appendChild(action);
         tbody.appendChild(tr);
     }
@@ -159,14 +193,23 @@ function rowValuesFrom(tr) {
     });
 }
 
-async function saveRow(tr) {
+async function saveRow(tr, row) {
     const status = document.getElementById("status");
     try {
         writeInputStrings(rowValuesFrom(tr));
         const len = wasmExports.build_row(entityIndex());
         if (!len) throw new Error("could not build row JSON");
         const jsonString = readMemoryString(wasmExports.json_ptr(), len);
-        await sendRow("PUT", jsonString);
+        await sendJson(resourceUrl(currentEntity, row), "PUT", jsonString);
+    } catch (err) {
+        status.textContent = String(err);
+    }
+}
+
+async function deleteRow(row) {
+    const status = document.getElementById("status");
+    try {
+        await sendJson(resourceUrl(currentEntity, row), "DELETE", null);
     } catch (err) {
         status.textContent = String(err);
     }
@@ -186,14 +229,15 @@ function loadRows() {
         });
 }
 
-async function sendRow(method, jsonString) {
+async function sendJson(url, method, jsonString) {
     const status = document.getElementById("status");
     try {
-        const response = await fetch(`${apiBase}/${currentEntity.name}`, {
-            method,
-            headers: { "Content-Type": "application/json" },
-            body: jsonString
-        });
+        const init = { method };
+        if (jsonString != null) {
+            init.headers = { "Content-Type": "application/json" };
+            init.body = jsonString;
+        }
+        const response = await fetch(url, init);
         const result = await response.json();
         status.textContent = JSON.stringify(result);
         console.log("Server response:", result);

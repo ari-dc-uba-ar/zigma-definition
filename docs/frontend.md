@@ -28,7 +28,8 @@ main.js reads schema_ptr/schema_len
         │
         ▼
 nav + one table from entity.fields
-GET/POST/PUT http://localhost:8080/{entity}
+GET/POST http://localhost:8080/{entity}
+PUT/DELETE http://localhost:8080/{entity}?pk…
 ```
 
 ## What the build copies vs compiles
@@ -100,8 +101,10 @@ After `WebAssembly.instantiateStreaming(fetch("frontend.wasm"), …)`, `main.js`
 `create_row`. Zig builds a typed record instance, `stringifyRecord`s it, and
 calls `js_send_post`, which `fetch`es `POST /{entity}`.
 
-**Save** (tbody) calls `build_row` and `PUT /{entity}`. The HTTP backend
-replaces the row whose pk matches.
+**Save** (tbody) calls `build_row` and `PUT /{entity}?pk…`. The HTTP backend
+replaces the row whose pk matches the query (body pk must match). Pk cells on
+those rows are locked. **Delete** sends `DELETE /{entity}?pk…` with no body;
+the backend removes the matching pk. The query names every pk field.
 
 On success the page GETs the list again. The table is rebuilt from the catalog
 plus that JSON; nothing is written to disk.
@@ -112,7 +115,7 @@ plus that JSON; nothing is written to disk.
 | --- | --- |
 | `src/frontend/main.zig` | WASM entry: catalog, `build_row` / `create_row` (generic `system`) |
 | `src/json.zig` | JSON for rows and entity Infos |
-| `src/frontend/main.js` | nav + table from the catalog; `GET` / `POST` / `PUT` |
+| `src/frontend/main.js` | nav + table from the catalog; `GET` / `POST /{entity}`; `PUT` / `DELETE /{entity}?pk` |
 | `src/frontend/index.html` | empty shell |
 | `examples/aida/src/aida.zig` | domain Defs (vocabulary fixture) |
 | `examples/aida/src/system.zig` | wired as `system` by the example `build.zig` |

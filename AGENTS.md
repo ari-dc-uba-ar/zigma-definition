@@ -48,7 +48,7 @@ Field Def properties: `type` (required, name in `type_defs`), optional `label`, 
 | --- | --- | --- |
 | `zigma_json` | `src/json.zig` | stringify rows and entity Infos |
 | (WASM) | `src/frontend/main.zig` | catalog + typed row builder; import name `system` |
-| (HTTP) | `src/http/main.zig` | `GET`/`POST`/`PUT /{entity}`; in-memory; import name `system` |
+| (HTTP) | `src/http/main.zig` | `GET`/`POST /{entity}`; `PUT`/`DELETE /{entity}?pk`; in-memory; import name `system` |
 
 `addApp` in `build.zig` compiles native HTTP and WASM frontend from one system file, with separate module graphs per target. Consumer (see `examples/aida/build.zig`): `@import("zigma_definition").addAppFromDep(b, dep, .{ .system_root, .target, .optimize })`.
 
@@ -72,7 +72,7 @@ python3 -m http.server 8000 --directory zig-out/frontend
 
 Details: [docs/run-example.md](docs/run-example.md).
 
-WASM exports: `schema_ptr`, `schema_len`, `input_ptr`, `input_len`, `lengths_ptr`, `json_ptr`, `json_len`, `build_row`, `create_row`. JS import: `env.js_send_post`. After WASM load, JS builds a nav from the entity catalog (`stringifyEntityCatalog(type_defs, entity_defs)`), one table from `entity.fields`, then `GET /{entity}`. The empty last row POSTs a typed record instance of that entity's fields; **Save** on a tbody row `PUT`s by pk. Backend keeps an in-memory JSON list per entity name (optional `system.seeds`); GET returns it, POST appends, PUT replaces the matching pk. The example app wires `src/system.zig` as `system`.
+WASM exports: `schema_ptr`, `schema_len`, `input_ptr`, `input_len`, `lengths_ptr`, `json_ptr`, `json_len`, `build_row`, `create_row`. JS import: `env.js_send_post`. After WASM load, JS builds a nav from the entity catalog (`stringifyEntityCatalog(type_defs, entity_defs)`), one table from `entity.fields`, then `GET /{entity}`. The empty last row POSTs a typed record instance of that entity's fields; **Save** on a tbody row `PUT`s `/{entity}?pk…` (pk cells locked); **Delete** sends `DELETE /{entity}?pk…` with no body. Identity is the named query (every pk field required). Backend keeps an in-memory JSON list per entity name (optional `system.seeds`); GET returns it, POST appends, PUT replaces the matching pk, DELETE removes it. The example app wires `src/system.zig` as `system`.
 
 ## Published package
 
