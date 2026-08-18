@@ -156,3 +156,26 @@ test "parseFieldValue rejects invalid struct JSON" {
     try std.testing.expectError(error.InvalidValue, zigma_json.parseFieldValue(Stamp, "foo"));
     try std.testing.expectError(error.InvalidValue, zigma_json.parseFieldValue(Stamp, "{\"y\":\"nope\",\"m\":3,\"d\":15}"));
 }
+
+fn sliceInside(haystack: []const u8, needle: []const u8) bool {
+    const start = @intFromPtr(haystack.ptr);
+    const ptr = @intFromPtr(needle.ptr);
+    return ptr >= start and ptr + needle.len <= start + haystack.len;
+}
+
+test "parseFieldValue struct text fields alias the JSON cell" {
+    const Row = struct { name: []const u8, n: i64 };
+    const json = "{\"name\":\"hello\",\"n\":3}";
+    const got = try zigma_json.parseFieldValue(Row, json);
+    try expectEqualStrings("hello", got.name);
+    try std.testing.expect(got.n == 3);
+    try std.testing.expect(sliceInside(json, got.name));
+}
+
+test "parseFieldValue rejects struct text that would allocate a copy" {
+    const Row = struct { name: []const u8 };
+    try std.testing.expectError(
+        error.InvalidValue,
+        zigma_json.parseFieldValue(Row, "{\"name\":\"line\\nbreak\"}"),
+    );
+}

@@ -4,7 +4,8 @@
 //! `stringifyEntitySchema` / `stringifyEntityCatalog` write entity Infos.
 //! Field `storage` is the Zig shape used by the page (`text`/`integer`/`boolean`/
 //! `object`), not the domain type name. A struct is `object` with nested `fields`.
-//! `parseFieldValue` turns a cell string into that Zig type (structs as JSON objects).
+//! `parseFieldValue` turns a cell string into that Zig type (structs as JSON objects;
+//! string fields alias the cell, they are not copies from parse scratch).
 //!
 //! Generator: imports `zigma` only. Does not know any concrete system.
 
@@ -62,6 +63,9 @@ pub fn fieldStorage(comptime T: type) []const u8 {
 }
 
 /// Cell string → `T`. Structs are JSON objects with `T`'s field names.
+/// `[]const u8` values alias `bytes`, including string fields inside a struct
+/// (the same contract as a top-level text cell). JSON strings that need an
+/// unescape copy would live in parse scratch and are `error.InvalidValue`.
 pub fn parseFieldValue(comptime T: type, bytes: []const u8) error{InvalidValue}!T {
     switch (@typeInfo(T)) {
         .pointer => |p| {
@@ -78,11 +82,32 @@ pub fn parseFieldValue(comptime T: type, bytes: []const u8) error{InvalidValue}!
             if (s.is_tuple) @compileError("unsupported field type " ++ @typeName(T));
             var buf: [4096]u8 = undefined;
             var fba = std.heap.FixedBufferAllocator.init(&buf);
-            const parsed = std.json.parseFromSlice(T, fba.allocator(), bytes, .{}) catch return error.InvalidValue;
-            defer parsed.deinit();
-            return parsed.value;
+            const value = std.json.parseFromSliceLeaky(T, fba.allocator(), bytes, .{
+                .allocate = .alloc_if_needed,
+            }) catch return error.InvalidValue;
+            if (!slicesInsideInput(T, value, bytes)) return error.InvalidValue;
+            return value;
         },
         else => @compileError("unsupported field type " ++ @typeName(T)),
+    }
+}
+
+fn slicesInsideInput(comptime T: type, value: T, input: []const u8) bool {
+    switch (@typeInfo(T)) {
+        .pointer => |p| {
+            if (p.size != .slice or p.child != u8) return true;
+            const start = @intFromPtr(input.ptr);
+            const ptr = @intFromPtr(value.ptr);
+            return ptr >= start and ptr + value.len <= start + input.len;
+        },
+        .@"struct" => |st| {
+            if (st.is_tuple) return true;
+            inline for (st.field_names) |name| {
+                if (!slicesInsideInput(@FieldType(T, name), @field(value, name), input)) return false;
+            }
+            return true;
+        },
+        else => return true,
     }
 }
 
