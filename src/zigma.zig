@@ -29,8 +29,8 @@ fn isTypeDefLike(comptime T: type) bool {
     // like a structural `satisfies` would
     const info = @typeInfo(T);
     if (info != .@"struct" or info.@"struct".is_tuple) return false;
-    if (info.@"struct".fields.len != 1) return false;
-    if (!eql(info.@"struct".fields[0], "Type")) return false;
+    if (info.@"struct".field_names.len != 1) return false;
+    if (!eql(info.@"struct".field_names[0], "Type")) return false;
     return info.@"struct".field_types[0] == type;
 }
 
@@ -38,8 +38,7 @@ fn checkTypeDefs(comptime type_defs: anytype) void {
     const info = @typeInfo(@TypeOf(type_defs));
     if (info != .@"struct" or info.@"struct".is_tuple)
         @compileError("a type collection must be a struct of TypeDef values");
-    inline for (info.@"struct".fields) |field| {
-        const type_name = field.name;
+    inline for (info.@"struct".field_names) |type_name| {
         if (!isTypeDefLike(@TypeOf(@field(type_defs, type_name))))
             @compileError("type '" ++ type_name ++ "': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })");
     }
@@ -87,25 +86,25 @@ fn checkField(comptime type_defs: anytype, comptime field_def: anytype, comptime
         @compileError("field '" ++ field_name ++ "': a field definition must be a struct like .{ .type = \"text\" }");
     if (!@hasField(FieldDefType, "type"))
         @compileError("field '" ++ field_name ++ "': missing 'type'");
-    inline for (info.@"struct".fields) |prop| {
-        const value = @field(field_def, prop.name);
+    inline for (info.@"struct".field_names) |prop| {
+        const value = @field(field_def, prop);
         const PropType = @TypeOf(value);
-        if (eql(prop.name, "type")) {
+        if (eql(prop, "type")) {
             if (!isStringType(PropType))
                 @compileError("field '" ++ field_name ++ "': 'type' must be the name of a domain type");
             if (!@hasField(@TypeOf(type_defs), value))
                 @compileError("field '" ++ field_name ++ "': unknown type '" ++ value ++ "'");
-        } else if (eql(prop.name, "is_name")) {
+        } else if (eql(prop, "is_name")) {
             if (PropType != bool or value != true)
                 @compileError("field '" ++ field_name ++ "': is_name only admits true in a definition (false is the default)");
-        } else if (eql(prop.name, "nullable")) {
+        } else if (eql(prop, "nullable")) {
             if (PropType != bool)
                 @compileError("field '" ++ field_name ++ "': 'nullable' must be a bool");
-        } else if (eql(prop.name, "label") or eql(prop.name, "description")) {
+        } else if (eql(prop, "label") or eql(prop, "description")) {
             if (!isStringType(PropType))
-                @compileError("field '" ++ field_name ++ "': '" ++ prop.name ++ "' must be a string");
+                @compileError("field '" ++ field_name ++ "': '" ++ prop ++ "' must be a string");
         } else {
-            @compileError("field '" ++ field_name ++ "': unknown property '" ++ prop.name ++ "'");
+            @compileError("field '" ++ field_name ++ "': unknown property '" ++ prop ++ "'");
         }
     }
 }
@@ -114,8 +113,8 @@ fn checkRecord(comptime type_defs: anytype, comptime rec: anytype) void {
     const info = @typeInfo(@TypeOf(rec));
     if (info != .@"struct" or info.@"struct".is_tuple)
         @compileError("a record definition must be a struct of field definitions");
-    inline for (info.@"struct".fields) |field| {
-        checkField(type_defs, @field(rec, field.name), field.name);
+    inline for (info.@"struct".field_names) |field_name| {
+        checkField(type_defs, @field(rec, field_name), field_name);
     }
 }
 
@@ -127,26 +126,24 @@ pub fn record(comptime type_defs: anytype, comptime rec: anytype) @TypeOf(rec) {
     return rec;
 }
 
+/// The type of a row of the record: each field gets the Zig type of its
+/// domain type. Field order is preserved.
 pub fn RecordInstanceType(comptime type_defs: anytype, comptime rec: anytype) type {
     comptime checkRecord(type_defs, rec);
-    const fields = @typeInfo(@TypeOf(rec)).@"struct".fields;
-    var types: [fields.len]type = undefined;
-    var names: [fields.len][]const u8 = undefined;
-    for (fields, 0..) |field, i| {
-        names[i] = field.name;
-        types[i] = @field(type_defs, @field(rec, field.name).type).Type;
+    const names = @typeInfo(@TypeOf(rec)).@"struct".field_names;
+    var types: [names.len]type = undefined;
+    for (names, 0..) |name, i| {
+        types[i] = @field(type_defs, @field(rec, name).type).Type;
     }
-    const frozen_types = types;
-    const frozen_names = names;
-    return @Struct(.auto, null, &frozen_names, &frozen_types, &@splat(.{}));
+    const frozen = types;
+    return @Struct(.auto, null, names, &frozen, &@splat(.{}));
 }
 
+/// The Info type corresponding to a record Def type: same field names, every
+/// field a `FieldInfo`.
 pub fn RecordInfoOf(comptime RecordDefType: type) type {
-    const fields = @typeInfo(RecordDefType).@"struct".fields;
-    var names: [fields.len][]const u8 = undefined;
-    for (fields, 0..) |field, i| names[i] = field.name;
-    const frozen_names = names;
-    return @Struct(.auto, null, &frozen_names, &@splat(FieldInfo), &@splat(.{}));
+    const names = @typeInfo(RecordDefType).@"struct".field_names;
+    return @Struct(.auto, null, names, &@splat(FieldInfo), &@splat(.{}));
 }
 
 fn LabelHolder(comptime name: []const u8) type {
@@ -169,8 +166,7 @@ fn fieldLabel(comptime field_def: anytype, comptime name: [:0]const u8) []const 
 /// field name replacing '_' with ' ').
 pub fn completeRecord(comptime rec: anytype) RecordInfoOf(@TypeOf(rec)) {
     var result: RecordInfoOf(@TypeOf(rec)) = undefined;
-    inline for (@typeInfo(@TypeOf(rec)).@"struct".fields) |field| {
-        const name = field.name;
+    inline for (@typeInfo(@TypeOf(rec)).@"struct".field_names) |name| {
         const field_def = @field(rec, name);
         const FieldDefType = @TypeOf(field_def);
         @field(result, name) = .{
@@ -193,9 +189,10 @@ fn containsName(comptime names: []const [:0]const u8, comptime name: []const u8)
 
 fn mergedFieldNames(comptime Parts: type) []const [:0]const u8 {
     comptime var names: []const [:0]const u8 = &.{};
-    inline for (@typeInfo(Parts).@"struct".fields) |field| {
-        inline for (@typeInfo(field.type).@"struct".fields) |part_field| {
-            if (!containsName(names, part_field.name)) names = names ++ [_][:0]const u8{part_field.name};
+    inline for (@typeInfo(Parts).@"struct".field_names) |part_name| {
+        const Part = @FieldType(Parts, part_name);
+        inline for (@typeInfo(Part).@"struct".field_names) |field_name| {
+            if (!containsName(names, field_name)) names = names ++ [_][:0]const u8{field_name};
         }
     }
     return names;
@@ -203,8 +200,8 @@ fn mergedFieldNames(comptime Parts: type) []const [:0]const u8 {
 
 fn lastPartWith(comptime Parts: type, comptime name: []const u8) [:0]const u8 {
     comptime var result: ?[:0]const u8 = null;
-    inline for (@typeInfo(Parts).@"struct".fields) |part| {
-        if (@hasField(@FieldType(Parts, part.name), name)) result = part.name;
+    inline for (@typeInfo(Parts).@"struct".field_names) |part_name| {
+        if (@hasField(@FieldType(Parts, part_name), name)) result = part_name;
     }
     return result.?;
 }
@@ -226,9 +223,9 @@ pub fn Merged(comptime Parts: type) type {
 /// TypeScript spread `{...a, ...b}`. `parts` is a tuple of structs.
 pub fn merge(comptime parts: anytype) Merged(@TypeOf(parts)) {
     var result: Merged(@TypeOf(parts)) = undefined;
-    inline for (@typeInfo(Merged(@TypeOf(parts))).@"struct".fields) |field| {
-        const part = @field(parts, lastPartWith(@TypeOf(parts), field.name));
-        @field(result, field.name) = @field(part, field.name);
+    inline for (@typeInfo(Merged(@TypeOf(parts))).@"struct".field_names) |name| {
+        const part = @field(parts, lastPartWith(@TypeOf(parts), name));
+        @field(result, name) = @field(part, name);
     }
     return result;
 }
@@ -246,7 +243,7 @@ fn nameListSlice(comptime list: anytype) []const [:0]const u8 {
 fn lenOfListType(comptime T: type) usize {
     return switch (@typeInfo(T)) {
         .array => |a| a.len,
-        .@"struct" => |s| if (s.is_tuple) s.fields.len else @compileError("expected a list of names"),
+        .@"struct" => |s| if (s.is_tuple) s.field_names.len else @compileError("expected a list of names"),
         else => @compileError("expected a list of names"),
     };
 }
@@ -272,8 +269,8 @@ fn checkFkDef(comptime fk: anytype, comptime fk_name: []const u8, comptime field
     const info = @typeInfo(FkType);
     if (info != .@"struct" or info.@"struct".is_tuple)
         @compileError("fk '" ++ fk_name ++ "': a fk definition must be a struct like .{ .entity = ..., .fields = ... }");
-    inline for (info.@"struct".fields) |prop| {
-        if (!eql(prop.name, "entity") and !eql(prop.name, "fields"))
+    inline for (info.@"struct".field_names) |prop| {
+        if (!eql(prop, "entity") and !eql(prop, "fields"))
             @compileError("fk '" ++ fk_name ++ "': unknown property '" ++ prop ++ "'");
     }
     if (!@hasField(FkType, "entity") or !@hasField(FkType, "fields"))
@@ -292,9 +289,9 @@ fn checkEntityDef(comptime def: anytype) void {
     const info = @typeInfo(DefType);
     if (info != .@"struct" or info.@"struct".is_tuple)
         @compileError("an entity definition must be a struct like .{ .pk = ..., .fields = ... }");
-    inline for (info.@"struct".fields) |prop| {
-        if (!eql(prop.name, "fields") and !eql(prop.name, "pk") and !eql(prop.name, "fks") and !eql(prop.name, "uks"))
-            @compileError("entity definition: unknown property '" ++ prop.name ++ "'");
+    inline for (info.@"struct".field_names) |prop| {
+        if (!eql(prop, "fields") and !eql(prop, "pk") and !eql(prop, "fks") and !eql(prop, "uks"))
+            @compileError("entity definition: unknown property '" ++ prop ++ "'");
     }
     if (!@hasField(DefType, "fields")) @compileError("an entity definition needs 'fields'");
     if (!@hasField(DefType, "pk")) @compileError("an entity definition needs 'pk'");
@@ -304,7 +301,7 @@ fn checkEntityDef(comptime def: anytype) void {
             @compileError("pk field '" ++ name ++ "' is not a field of the entity");
     }
     if (@hasField(DefType, "uks")) {
-        inline for (@typeInfo(@TypeOf(def.uks)).@"struct".fields) |uk_name| {
+        inline for (@typeInfo(@TypeOf(def.uks)).@"struct".field_names) |uk_name| {
             const uk_names = nameListSlice(@field(def.uks, uk_name));
             for (uk_names) |name| {
                 if (!@hasField(@TypeOf(def.fields), name))
@@ -313,7 +310,7 @@ fn checkEntityDef(comptime def: anytype) void {
         }
     }
     if (@hasField(DefType, "fks")) {
-        inline for (@typeInfo(@TypeOf(def.fks)).@"struct".fields) |fk_name| {
+        inline for (@typeInfo(@TypeOf(def.fks)).@"struct".field_names) |fk_name| {
             checkFkDef(@field(def.fks, fk_name), fk_name, def.fields);
         }
     }
@@ -401,7 +398,7 @@ pub fn mergePk(comptime pks: anytype) [PkMerge(pks).names.len][:0]const u8 {
 
 fn fkSourceNames(comptime fk: anytype) []const [:0]const u8 {
     const info = @typeInfo(@TypeOf(fk.fields));
-    if (info == .@"struct" and !info.@"struct".is_tuple) return info.@"struct".fields;
+    if (info == .@"struct" and !info.@"struct".is_tuple) return info.@"struct".field_names;
     return nameListSlice(fk.fields);
 }
 
@@ -417,8 +414,8 @@ fn fkTargetNames(comptime fk: anytype) []const [:0]const u8 {
     const info = @typeInfo(@TypeOf(fk.fields));
     if (info == .@"struct" and !info.@"struct".is_tuple) {
         comptime var names: []const [:0]const u8 = &.{};
-        inline for (info.@"struct".fields) |source| {
-            const target: [:0]const u8 = @field(fk.fields, source.name);
+        inline for (info.@"struct".field_names) |source| {
+            const target: [:0]const u8 = @field(fk.fields, source);
             names = names ++ [_][:0]const u8{target};
         }
         return names;
@@ -444,29 +441,25 @@ fn FkInfoOf(comptime fk: anytype) type {
 }
 
 fn CompletedFksType(comptime fks: anytype) type {
-    const fields = @typeInfo(@TypeOf(fks)).@"struct".fields;
-    var fk_names: [fields.len][]const u8 = undefined;
-    for (fields, 0..) |field, i| fk_names[i] = field.name;
-
-    var types: [fields.len]type = undefined;
+    const fk_names = @typeInfo(@TypeOf(fks)).@"struct".field_names;
+    var types: [fk_names.len]type = undefined;
     inline for (fk_names, 0..) |fk_name, i| {
         types[i] = FkInfoOf(@field(fks, fk_name));
     }
-    const frozen_types = types;
-    const frozen_names = fk_names;
-    return @Struct(.auto, null, &frozen_names, &frozen_types, &@splat(.{}));
+    const frozen = types;
+    return @Struct(.auto, null, fk_names, &frozen, &@splat(.{}));
 }
 
 fn completeFks(comptime fks: anytype) CompletedFksType(fks) {
     var result: CompletedFksType(fks) = undefined;
-    inline for (@typeInfo(@TypeOf(fks)).@"struct".fields) |field| {
-        const fk = @field(fks, field.name);
+    inline for (@typeInfo(@TypeOf(fks)).@"struct".field_names) |fk_name| {
+        const fk = @field(fks, fk_name);
         var fk_info: FkInfoOf(fk) = undefined;
         fk_info.entity = fk.entity;
         inline for (FkSources(fk).names) |source| {
             @field(fk_info.fields, source) = fkTargetName(fk, source);
         }
-        @field(result, field.name) = fk_info;
+        @field(result, fk_name) = fk_info;
     }
     return result;
 }
@@ -503,22 +496,22 @@ fn sameNameSet(comptime a: []const [:0]const u8, comptime b: []const [:0]const u
 
 fn fkMatchesTargetKey(comptime target_fields: []const [:0]const u8, comptime target: anytype) bool {
     if (sameNameSet(target_fields, &target.pk)) return true;
-    inline for (@typeInfo(@TypeOf(target.uks)).@"struct".fields) |uk_name| {
+    inline for (@typeInfo(@TypeOf(target.uks)).@"struct".field_names) |uk_name| {
         if (sameNameSet(target_fields, nameListSlice(@field(target.uks, uk_name)))) return true;
     }
     return false;
 }
 
 fn checkEntities(comptime entity_defs: anytype) void {
-    inline for (@typeInfo(@TypeOf(entity_defs)).@"struct".fields) |entity_field| {
-        const entity = @field(entity_defs, entity_field.name);
-        inline for (@typeInfo(@TypeOf(entity.fks)).@"struct".fields) |fk_field| {
-            const fk = @field(entity.fks, fk_field.name);
+    inline for (@typeInfo(@TypeOf(entity_defs)).@"struct".field_names) |entity_name| {
+        const entity = @field(entity_defs, entity_name);
+        inline for (@typeInfo(@TypeOf(entity.fks)).@"struct".field_names) |fk_name| {
+            const fk = @field(entity.fks, fk_name);
             if (!@hasField(@TypeOf(entity_defs), fk.entity))
-                @compileError("entity '" ++ entity_field.name ++ "', fk '" ++ fk_field.name ++ "': unknown target entity '" ++ fk.entity ++ "'");
+                @compileError("entity '" ++ entity_name ++ "', fk '" ++ fk_name ++ "': unknown target entity '" ++ fk.entity ++ "'");
             const matches = fkMatchesTargetKey(fkTargetNames(fk), @field(entity_defs, fk.entity));
             if (!matches)
-                @compileError("entity '" ++ entity_field.name ++ "', fk '" ++ fk_field.name ++ "': target fields do not match the complete pk nor any uk of entity '" ++ fk.entity ++ "'");
+                @compileError("entity '" ++ entity_name ++ "', fk '" ++ fk_name ++ "': target fields do not match the complete pk nor any uk of entity '" ++ fk.entity ++ "'");
         }
     }
 }
