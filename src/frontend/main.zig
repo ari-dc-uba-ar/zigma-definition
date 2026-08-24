@@ -12,6 +12,7 @@ const type_defs = system.type_defs;
 const entity_defs = system.entity_defs;
 const entity_names = @typeInfo(@TypeOf(entity_defs)).@"struct".field_names;
 
+/// Largest `.fields` count among `entity_defs`. No inputs. Used as `lengths_buf` length.
 fn maxFieldCount() usize {
     var max: usize = 0;
     inline for (entity_names) |name| {
@@ -33,6 +34,7 @@ var lengths_buf: [max_field_count]usize = undefined;
 var error_buf: [256]u8 = undefined;
 var error_len_value: usize = 0;
 
+/// Writes a build error into `error_buf` (`fmt` + `args`, or a fallback if it does not fit).
 fn setError(comptime fmt: []const u8, args: anytype) void {
     const msg = std.fmt.bufPrint(&error_buf, fmt, args) catch {
         const fallback = "error: could not build row JSON";
@@ -43,6 +45,7 @@ fn setError(comptime fmt: []const u8, args: anytype) void {
     error_len_value = msg.len;
 }
 
+/// Catalog JSON in `schema_buf` (filled once). Slice of that buffer; no inputs.
 fn schemaBytes() []const u8 {
     if (!schema_ready) {
         const s = zigma_json.stringifyEntityCatalog(type_defs, entity_defs, &schema_buf) catch unreachable;
@@ -88,6 +91,8 @@ export fn error_len() usize {
     return error_len_value;
 }
 
+/// Parses packed `input_buf`/`lengths_buf` into `entity`'s `RecordInstanceType`, writes JSON to `json_buf`.
+/// Returns that length, or 0 and sets `error_buf` if a cell is too long or not a value of the field type.
 fn buildRowJson(comptime entity: anytype) usize {
     error_len_value = 0;
     const Row = zigma.RecordInstanceType(type_defs, entity.fields);
@@ -114,6 +119,7 @@ fn buildRowJson(comptime entity: anytype) usize {
     return json_slice.len;
 }
 
+/// `entity_index` is the field order of `entity_defs` (same as the catalog array).
 /// Packed strings in `input_buf`; per-field lengths in `lengths_buf`.
 /// Returns the JSON length written to `json_buf`, or 0 on error.
 export fn build_row(entity_index: u32) usize {
@@ -125,6 +131,7 @@ export fn build_row(entity_index: u32) usize {
     return 0;
 }
 
+/// Same as `build_row`; on success also calls `js_send_post` with that JSON. Returns the length, or 0 on error.
 export fn create_row(entity_index: u32) usize {
     const len = build_row(entity_index);
     if (len == 0) return 0;

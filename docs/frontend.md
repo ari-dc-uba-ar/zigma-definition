@@ -1,126 +1,515 @@
-# How the example frontend is produced
+# Frontend layer
 
-The page is **not** HTML/JS emitted from Zig at compile time. `src/frontend/` is a
-generic client: it knows `zigma`, `zigma_json`, and a `system` module
-(`type_defs` + `entity_defs`). The aida example is a consumer package:
-`examples/aida/build.zig` calls `addAppFromDep` with `src/system.zig` as
-`system`. The table is built **at runtime** from entity Infos that live in the
-WASM module.
+How to run the example: [run-example.md](run-example.md). Build graph: [build.md](build.md). Vocabulary (Defs → Infos): [zigma.md](zigma.md).
 
-How to run it: [run-example.md](run-example.md). Build steps: [build.md](build.md).
+The page is **not** HTML/JS emitted from Zig at compile time. `src/frontend/` is a generic client: it knows `zigma`, `zigma_json`, and a `system` module (`type_defs` + `entity_defs`). The aida example is a consumer package: `examples/aida/build.zig` calls `addAppFromDep` with `src/system.zig` as `system`. The table is built **at runtime** from entity Infos that live in the WASM module. JS never imports a concrete system.
 
+This document is the layer in detail: first how the pieces sit together, then every function call on each user flow.
+
+---
+
+## 1. Mid-high level: parts and how they interact
+
+Three runtimes, one `system` file compiled twice (host vs `wasm32-freestanding`). The descriptor (`zigma`) does not import generators. Both generators import `zigma` and the injected `system`.
+
+```mermaid
+flowchart TB
+  subgraph compile["Compile time — examples/aida"]
+    aida["aida.zig<br/>type_defs + entity_defs"]
+    sys["system.zig<br/>re-exports Defs + optional seeds"]
+    addApp["build.zig addAppFromDep"]
+    aida --> sys
+    sys --> addApp
+  end
+
+  subgraph artifacts["zig-out/"]
+    wasm["frontend/frontend.wasm"]
+    html["frontend/index.html<br/>empty shell"]
+    js["frontend/main.js<br/>copied as-is"]
+    bin["bin/backend"]
+    addApp -->|"compile main.zig<br/>wasm32, rdynamic, export memory"| wasm
+    addApp -->|"copy"| html
+    addApp -->|"copy"| js
+    addApp -->|"compile http/main.zig<br/>host target"| bin
+  end
+
+  subgraph browser["Browser — origin :8000"]
+    page["index.html<br/>nav, empty table, status"]
+    mainjs["main.js"]
+    mem["WASM linear memory<br/>schema / input / lengths / json / error"]
+    page --> mainjs
+    mainjs -->|"instantiateStreaming"| wasm
+    wasm --- mem
+    mainjs <-->|"read/write pointers"| mem
+    wasm -->|"import env.js_send_post"| mainjs
+  end
+
+  subgraph server["Backend — :8080"]
+    lists["in-memory JSON lists<br/>one ArrayList per entity name"]
+    bin --> lists
+  end
+
+  mainjs -->|"GET/POST /{entity}<br/>PUT/DELETE /{entity}?pk…"| bin
 ```
-examples/aida/src/aida.zig     entity Defs (comptime)
-examples/aida/src/system.zig   re-exports Defs + optional seeds
-        │                      addAppFromDep imports this as `system`
-        ▼
-src/frontend/main.zig          WASM: catalog JSON + typed row builder
-src/json.zig                   stringifyEntityCatalog / stringifyRecord
-        │
-        ▼  cd examples/aida && zig build frontend
-examples/aida/zig-out/frontend/
-  frontend.wasm                compiled from main.zig
-  index.html                   copied as-is (empty shell)
-  main.js                      copied as-is
-        │
-        ▼  browser loads the page
-main.js reads schema_ptr/schema_len
-        │
-        ▼
-nav + one table from entity.fields
-GET/POST http://localhost:8080/{entity}
-PUT/DELETE http://localhost:8080/{entity}?pk…
-```
 
-## What the build copies vs compiles
+**What each arrow means**
 
-`addAppFromDep` (from the example’s `build.zig`) writes `zig-out/frontend/`
-under `examples/aida/`. Two different things happen:
-
-1. **Compile** `src/frontend/main.zig` for `wasm32-freestanding` (`optimize = .small`,
-   `entry = .disabled`, `rdynamic`, exported memory). The module imports `zigma`,
-   `zigma_json`, and `system`. For the example, `system` is `src/system.zig`. The
-   artifact is `frontend.wasm`. Native HTTP uses a **separate** copy of those
-   modules (host target, not wasm).
-2. **Copy** `src/frontend/index.html` and `src/frontend/main.js` unchanged. There is no
-   template step and no HTML generator.
-
-`index.html` is a shell: an empty nav, a title, an empty table (`thead` / `tbody`
-/ `tfoot`), a status line, and `<script src="main.js">`. Column headers, inputs,
-and rows are created later in the browser.
-
-`cd examples/aida && zig build` and `zig build frontend` both perform this
-install. The library `zig build` at the repo root does not. Generators
-under `src/` (`json.zig`, `http/`, `frontend/`) **are** in the published package so a consumer
-can call `addAppFromDep`. Tests and `docs/` are not.
-
-## What WASM exposes
-
-On first read of `schema_ptr` / `schema_len`, WASM fills a buffer with
-`stringifyEntityCatalog(type_defs, entity_defs)`. For every entity that walks
-`completeEntity` and writes one JSON object:
-
-- `name`
-- `pk`, `uks`, `fks`
-- `fields`: `{ name, label, type, storage }` per field. `type` is the domain
-  type name; `storage` is the Zig shape (`text`, `integer`, `boolean`,
-  `object`). A struct also has nested `fields` (`name` + `storage`) from its
-  Zig type. The cell string for a struct is that JSON object.
-
-That catalog is the only schema the page uses. JS never imports a concrete
-system.
-
-The other exports are a packed-string row builder, not UI:
-
-| Export | Role |
+| Boundary | Contract |
 | --- | --- |
-| `schema_ptr` / `schema_len` | catalog JSON |
-| `input_ptr` / `input_len` | packed field strings from the page |
-| `lengths_ptr` | per-field lengths into `input_buf` |
-| `build_row(entity_index)` | `parseFieldValue` into `RecordInstanceType`; 0 if a cell is not a value of that Zig type |
-| `json_ptr` / `json_len` | last built row (for PUT) |
-| `error_ptr` / `error_len` | last build error (`error: orden: not integer`) |
-| `create_row(entity_index)` | `build_row` then `env.js_send_post`; returns the JSON length (0 on failure) |
+| `system.zig` → WASM | Same `type_defs` / `entity_defs` baked into `frontend.wasm`. Catalog JSON is `stringifyEntityCatalog` of those Defs (Infos via `completeEntity`). Seeds are **not** in WASM. |
+| `system.zig` → HTTP | Same Defs plus optional `seeds`. Lists start from `stringifyRecord` of each seed row. |
+| HTML → JS | Shell only: `#entity-nav`, `#sheet-title`, `#sheet-table` (`thead`/`tbody`/`tfoot`), `#status`. No columns until JS runs. |
+| JS → WASM exports | Pointer/length accessors plus `build_row(entity_index)` / `create_row(entity_index)`. `entity_index` is field order on `entity_defs` (same order as the catalog array). |
+| WASM → JS import | `env.js_send_post(ptr, len)`: Zig has already written row JSON into `json_buf`; JS reads that slice and `fetches` `POST`. Zig does **not** await the Promise (the POST is fire-and-forget from WASM’s point of view; JS still `await`s inside the import). |
+| JS → HTTP | Hard-coded `http://localhost:8080`. CORS `*` on the server. Identity for PUT/DELETE is the query string (every pk field, nothing else). POST has no query. GET has no query. |
 
-`entity_index` is the order of fields on `entity_defs` (the same order as the
-catalog array).
+**Responsibility split (why WASM exists)**
 
-## What JS builds in the browser
+JS owns DOM, navigation, `fetch`, and packing cell **strings** into WASM memory. Zig owns typing: `RecordInstanceType` + `parseFieldValue` + `stringifyRecord`. A cell that is not a value of that field’s Zig type never becomes a POST/PUT body; the page shows `error: {field}: not {storage}` from `error_ptr`.
 
-After `WebAssembly.instantiateStreaming(fetch("frontend.wasm"), …)`, `main.js`:
+Buffers live in WASM (not allocated from JS):
 
-1. Parses the catalog JSON.
-2. Builds a nav of entity names (hash `#` + entity name).
-3. Builds **one** table from the selected entity’s `fields`: thead labels, tfoot
-   empty alta row, tbody filled from `GET /{entity}`. With no hash, the first
-   catalog entity is selected.
-4. Chooses `<input>` widgets from `field.storage` (`integer` → number,
-   `boolean` → checkbox, `object` → nested inputs per subfield, else text).
+| Buffer | Size | Role |
+| --- | --- | --- |
+| `schema_buf` | 32768 | Catalog JSON, filled once on first `schema_ptr` / `schema_len` |
+| `input_buf` | 8192 | Concatenated UTF-8 cell strings |
+| `lengths_buf` | `max_field_count` × `usize` | Length of each packed field, in entity field order |
+| `json_buf` | 8192 | Last successfully built row JSON |
+| `error_buf` | 256 | Last `build_row` / `create_row` error message |
 
-**Post** (tfoot) packs the empty-row values into WASM memory and calls
-`create_row`. Zig builds a typed record instance, `stringifyRecord`s it, and
-calls `js_send_post`, which `fetch`es `POST /{entity}`. If a cell is not a
-value of the field’s Zig type, `create_row` returns 0 and the page shows
-`error: {field}: not {storage}` from `error_ptr`.
+`max_field_count` is the largest `.fields` count among entities in `entity_defs` (comptime).
 
-**Save** (tbody) calls `build_row` and `PUT /{entity}?pk…`. The HTTP backend
-replaces the row whose pk matches the query (body pk must match). Pk cells on
-those rows are locked. **Delete** sends `DELETE /{entity}?pk…` with no body;
-the backend removes the matching pk. The query names every pk field (struct
-values as JSON).
+---
 
-On success the page GETs the list again. The table is rebuilt from the catalog
-plus that JSON; nothing is written to disk.
+## 2. Catalog JSON the page actually sees
 
-## Source files
+On first read of `schema_ptr` / `schema_len`, WASM calls `zigma_json.stringifyEntityCatalog(type_defs, entity_defs, &schema_buf)`. That walks every entity name on `entity_defs` and, per entity, `stringifyEntitySchema` → `zigma.completeEntity` then writes one object:
+
+- `name` — entity name (struct field on `entity_defs`)
+- `pk`, `uks`, `fks` — completed keys (fks already source→target maps)
+- `fields` — array of `{ name, label, type, storage }`
+  - `type` is the **domain** type name (`text`, `legajo`, `fecha`, …)
+  - `storage` is the **Zig** shape used by widgets: `text` / `integer` / `boolean` / `object`
+  - a struct also has nested `fields` (`name` + `storage`, recursively)
+
+That catalog is the only schema the page uses.
+
+---
+
+## 3. Function-call traces for each flow
+
+Notation: `file: function` then callees. Browser APIs are included when they are part of the contract.
+
+### 3.1 Build (no browser)
+
+```
+examples/aida/build.zig
+  └─ @import("zigma_definition").addAppFromDep(b, dep, .{ .system_root, .target, .optimize })
+       └─ build.zig: addApp
+            ├─ zigmaModule / jsonModule / systemModule   (host)
+            │    └─ backend executable  ← src/http/main.zig
+            ├─ zigmaModule / jsonModule / systemModule   (wasm32-freestanding, .small)
+            │    └─ frontend executable ← src/frontend/main.zig
+            │         .entry = .disabled, .rdynamic, .export_memory
+            ├─ install artifact → zig-out/frontend/frontend.wasm
+            ├─ installFile      → zig-out/frontend/main.js     (copy)
+            └─ installFile      → zig-out/frontend/index.html  (copy)
+```
+
+The library `zig build` at the repo root does **not** install this app. Generators under `src/` **are** in the published package so a consumer can call `addAppFromDep`.
+
+---
+
+### 3.2 Page load → catalog → first table
+
+Triggered by the browser loading `index.html` (`<script src="main.js">`). Status text starts as `Loading WASM…`.
+
+```
+browser
+  └─ fetch("index.html") → parse DOM (empty nav, empty table)
+       └─ fetch("main.js") → execute
+
+main.js  (top level)
+  └─ WebAssembly.instantiateStreaming(fetch("frontend.wasm"), importObject)
+       │  importObject.env.js_send_post = async (ptr, len) => { … }  // registered, not called yet
+       │
+       ├─ [success]
+       │    wasmExports = obj.instance.exports
+       │    window.wasmInstance = obj.instance
+       │    catalog = JSON.parse(
+       │         readWasmString(schema_ptr, schema_len)
+       │    )
+       │
+       │    readWasmString(ptrFn, lenFn)
+       │      └─ readMemoryString(ptrFn(), lenFn())
+       │           └─ TextDecoder.decode(memory.subarray(ptr, ptr+len))
+       │
+       │    WASM (first schema_ptr or schema_len):
+       │      schema_ptr() / schema_len()
+       │        └─ schemaBytes()
+       │             if !schema_ready:
+       │               zigma_json.stringifyEntityCatalog(type_defs, entity_defs, &schema_buf)
+       │                 for each entity name:
+       │                   stringifyEntitySchema(…)
+       │                     zigma.completeEntity(entity_def)
+       │                     writeNameList(pk), writeUks, writeFks
+       │                     writeEntityFields → fieldStorage(zig_type)
+       │                       if struct: writeNestedFields
+       │             schema_ready = true
+       │
+       │    fromHash = location.hash without '#'
+       │    selectEntity(fromHash || catalog[0].name)
+       │    status ← "Ready." if it was still "Loading WASM…"
+       │    addEventListener("hashchange", …)
+       │
+       └─ [failure]
+            status ← String(err)
+            console.error(err)
+```
+
+`selectEntity` is the shared “show this entity” entry (also used on hash change). Continue in §3.3.
+
+---
+
+### 3.3 Select entity (initial load or hash change)
+
+Hash change handler: if `location.hash` name is non-empty and different from `currentEntity.name`, call `selectEntity(name)`.
+
+```
+selectEntity(name)
+  ├─ catalog.find(item => item.name === name) ?? catalog[0]
+  ├─ currentEntity = entity
+  ├─ location.hash = entity.name
+  ├─ #sheet-title.textContent = entity.name
+  ├─ buildNav()
+  │    #entity-nav.replaceChildren()
+  │    for each catalog entity:
+  │      createElement("a")  href="#"+name  class "selected" if current
+  │      appendChild
+  ├─ buildTable(entity)
+  │    thead: one <th> per field.label + empty actions <th>
+  │    tfoot: tr#new-row
+  │      for each field:
+  │        td.appendChild(makeInput(field, default, locked=false))
+  │          default: boolean → false, object → {}, else ""
+  │      button#post-row "Post" + click listener  → see §3.5
+  └─ loadRows()  → see §3.4
+```
+
+`makeInput` (widgets from `storage`):
+
+```
+makeInput(field, value, locked)
+  if field.storage === "object" && field.fields:
+    div.object-fields[data-field=name]
+    for each nested field: append makeInput(sub, obj[sub.name], locked)
+  else:
+    <input data-field=name autocomplete=off>
+    integer → type=number, value
+    boolean → type=checkbox, checked if true / "true"
+    else    → type=text, value
+    if locked: boolean → disabled; else readOnly; tabIndex = -1
+```
+
+---
+
+### 3.4 GET list (`loadRows`)
+
+```
+loadRows()
+  fetch(`${apiBase}/${currentEntity.name}`)     // GET, no query
+    .then(response)
+         if !ok → throw `GET /{name} {status}`
+         return response.json()                 // JSON array of row objects
+    .then(fillTable)
+    .catch → status + console.error
+```
+
+Backend:
+
+```
+http/main.zig: main
+  seed(gpa, &lists)                             // once at process start
+    if system.seeds:
+      for each entity with a seeds field:
+        appendJson(gpa, list, row)
+          zigma_json.stringifyRecord(row, buf)
+          list.append(dupe)
+
+tcp accept → handleConnection
+  server.receiveHead → handleRequest
+    GET → handleGet
+      printRequest("GET", target, "")
+      splitTarget(target)                       // path vs query
+      if query nonempty → 400 {"status":"invalid"}
+      entityNameOf(path)                        // "/materias" → "materias"
+      listFor(lists, name)
+      joinJsonArray(list.items, json_buf)       // '[' + stored strings + ']'
+      reply 200 + CORS + application/json
+```
+
+Frontend after JSON:
+
+```
+fillTable(rows)
+  tbody.replaceChildren()
+  for each row:
+    tr
+    for each currentEntity.fields:
+      td.appendChild(makeInput(field, row[field.name], isPkField(field)))
+        isPkField → currentEntity.pk.includes(field.name)   // locked if pk
+    td.action
+      Save  click → saveRow(tr, row)            // row is the GET object (pk for URL)
+      Delete click → deleteRow(row)
+```
+
+The `row` closed over by Save/Delete is the **original GET object**, not a live read of the inputs. PUT/DELETE query pk therefore stays the identity from load, even if the user edited non-pk cells. Pk cells are locked so the query and the body pk stay aligned on Save.
+
+---
+
+### 3.5 Post (tfoot alta)
+
+Click `#post-row`. WASM builds a typed instance, stringifies it, and asks JS to POST. JS does **not** `fetch` POST itself except via the WASM import.
+
+```
+click Post
+  values = fields.map((field, i) => readFieldValue(newRow.children[i], field))
+  try:
+    writeInputStrings(values)
+    len = wasmExports.create_row(entityIndex())
+    if !len → throw new Error(rowBuildError())
+  catch → status ← message
+```
+
+Reading cells:
+
+```
+readFieldValue(td, field)
+  if object:
+    return JSON.stringify(readLeaf(td, field))
+  boolean → input.checked ? "true" : "false"
+  else    → input.value
+
+readLeaf(root, field)
+  if object:
+    wrap = .object-fields[data-field=name]
+    obj[sub.name] = readLeaf(wrap, sub) for each nested field
+    return obj
+  boolean → input.checked                         // JS boolean, then stringify at object parent
+  integer → Number(input.value) or "" if empty
+  else    → input.value
+```
+
+Packing into WASM (entity field order, concatenated UTF-8):
+
+```
+writeInputStrings(values)
+  ptr = input_ptr()
+  cap = input_len()
+  parts = values.map(v => TextEncoder.encode(String(v)))
+  if sum(lengths) > cap → throw "input too long for WASM buffer"
+  memory = Uint8Array(wasmExports.memory.buffer)
+  lengths = Uint32Array(memory.buffer, lengths_ptr(), parts.length)
+  for each part i:
+    memory.set(part, ptr + offset)
+    lengths[i] = part.length
+    offset += part.length
+```
+
+`entityIndex()` = `catalog.findIndex(e => e.name === currentEntity.name)` (must match `entity_defs` field order).
+
+WASM:
+
+```
+export create_row(entity_index)
+  len = build_row(entity_index)
+  if len == 0 → return 0
+  js_send_post(json_buf[0..len].ptr, len)        // extern "env"
+  return len
+
+export build_row(entity_index)
+  inline for entity_names, i:
+    if entity_index == i → return buildRowJson(@field(entity_defs, name))
+  setError("error: unknown entity")
+  return 0
+
+buildRowJson(entity)
+  error_len_value = 0
+  Row = zigma.RecordInstanceType(type_defs, entity.fields)
+  offset = 0
+  for each field name i:
+    len = lengths_buf[i]
+    if offset+len > input_buf.len → setError("error: input too long"); return 0
+    bytes = input_buf[offset..][0..len]
+    @field(row, name) = zigma_json.parseFieldValue(@FieldType(Row, name), bytes)
+      catch setError("error: {s}: not {s}", name, fieldStorage(T)); return 0
+    offset += len
+  json_slice = zigma_json.stringifyRecord(row, &json_buf)
+    catch setError("error: could not stringify row"); return 0
+  json_len_value = json_slice.len
+  return json_slice.len
+```
+
+`parseFieldValue`:
+
+- `[]const u8` → alias the cell bytes (no copy)
+- int → `parseInt` base 10
+- bool → exactly `"true"` / `"false"`
+- struct → `std.json.parseFromSliceLeaky` of the cell (JS already `JSON.stringify`’d the nested object); string slices inside the struct must still point into those input bytes (`slicesInsideInput`)
+
+JS import (called from `create_row`):
+
+```
+env.js_send_post(ptr, len)          // async in JS; Zig signature is void
+  jsonString = readMemoryString(ptr, len)
+  await sendJson(`${apiBase}/${currentEntity.name}`, "POST", jsonString)
+```
+
+Shared HTTP helper (also PUT/DELETE):
+
+```
+sendJson(url, method, jsonString)
+  fetch(url, { method, headers/body if jsonString != null })
+  result = await response.json()
+  status ← JSON.stringify(result)
+  console.log("Server response:", result)
+  if response.ok:
+    if method === "POST":
+      #new-row inputs: checkboxes unchecked, others value ""
+    loadRows()                      // §3.4 again
+```
+
+Backend POST:
+
+```
+handleRequest POST → handleWrite(..., .post)
+  requestReader → allocRemaining body
+  printRequest("POST", path, body)
+  splitTarget / entityNameOf
+  if query nonempty → 400
+  inline match entity name:
+    Row = RecordInstanceType(type_defs, entity.fields)
+    std.json.parseFromSlice(Row, body)
+      fail → 400 {"status":"invalid"}
+    appendJson(gpa, list, parsed.value)
+      stringifyRecord + dupe into list
+  reply 200 {"status": "received"}
+```
+
+`create_row` returns `len` to JS **before** `sendJson` finishes (the import’s Promise is not observed by Zig). Failure of `fetch` is handled inside `sendJson` (`status` + `console.error`), not via `create_row`’s return value. A failed **parse** in WASM still returns 0 and never calls `js_send_post`.
+
+`rowBuildError()`:
+
+```
+len = error_len()
+if !len → "error: could not build row JSON"
+else readMemoryString(error_ptr(), len)
+```
+
+---
+
+### 3.6 Save (tbody PUT)
+
+Pk cells are `readOnly` / `disabled`. Identity in the URL is the **loaded** `row` object passed into `saveRow`, not a re-read of pk inputs.
+
+```
+click Save
+  saveRow(tr, row)
+    writeInputStrings(rowValuesFrom(tr))
+      rowValuesFrom(tr) = fields.map((field, i) => readFieldValue(tr.children[i], field))
+    len = wasmExports.build_row(entityIndex())     // not create_row — no js_send_post
+    if !len → throw rowBuildError()
+    jsonString = readMemoryString(json_ptr(), len)
+    await sendJson(resourceUrl(currentEntity, row), "PUT", jsonString)
+```
+
+URL:
+
+```
+resourceUrl(entity, row)
+  URLSearchParams
+  for name of entity.pk:
+    query.set(name, pkString(name, row[name]))
+  `${apiBase}/${entity.name}?${query}`
+
+pkString(name, value)
+  storage object  → JSON.stringify(value ?? {})
+  storage boolean → "true" / "false"
+  nullish         → ""
+  else            → String(value)
+```
+
+Backend PUT:
+
+```
+handleWrite(..., .put)
+  parseQuery(query) → QueryPair[]
+  pkFromQuery(entity, pairs)
+    RecordInstanceType(type_defs, extractPk(entity))
+    every query name must be a pk field; every pk field required; no duplicates
+    parseQueryValue(T, raw) = parseFieldValue(T, raw)
+    fail → 400  (missing / extra / duplicate / invalid pk)
+  parseFromSlice(Row, body)
+  pkEqual(entity, body, url_pk) or 400 "pk mismatch"
+  replaceByPk(gpa, list, entity, url_pk, parsed.value)
+    for each stored JSON: parseFromSlice(Row), pkEqual → replace dupe of stringifyRecord
+    not found → 404 {"status":"not found"}
+  200 {"status": "received"}
+```
+
+Then `sendJson` on OK → `loadRows()` (no special POST input clearing).
+
+---
+
+### 3.7 Delete
+
+No WASM row builder. Body is omitted (`jsonString === null` → no `Content-Type`, no body).
+
+```
+click Delete
+  deleteRow(row)
+    await sendJson(resourceUrl(currentEntity, row), "DELETE", null)
+```
+
+Backend:
+
+```
+handleWrite(..., .delete)
+  printRequest("DELETE", path, "")               // body not printed
+  pkFromQuery as PUT
+  removeByPk(gpa, list, entity, url_pk)
+    parse each stored JSON as Row, pkEqual → orderedRemove
+    not found → 404
+  200 {"status": "received"}
+```
+
+---
+
+### 3.8 CORS preflight
+
+The page origin (`:8000`) is not `:8080`. Browsers send `OPTIONS` before some POSTs/PUTs/DELETEs.
+
+```
+handleRequest OPTIONS
+  request.respond("", extra_headers: cors_origin, cors_methods, cors_headers)
+```
+
+JS does not call this explicitly; `fetch` does.
+
+---
+
+## 4. Source files
 
 | File | Role |
 | --- | --- |
-| `src/frontend/main.zig` | WASM entry: catalog, `build_row` / `create_row` (generic `system`) |
-| `src/json.zig` | JSON for rows and entity Infos |
-| `src/frontend/main.js` | nav + table from the catalog; `GET` / `POST /{entity}`; `PUT` / `DELETE /{entity}?pk` |
-| `src/frontend/index.html` | empty shell |
-| `examples/aida/src/aida.zig` | domain Defs (vocabulary fixture) |
-| `examples/aida/src/system.zig` | wired as `system` by the example `build.zig` |
-| `examples/aida/build.zig` | consumer: `addAppFromDep` |
-| `src/http/main.zig` | in-memory lists per entity name from `system` |
+| `src/frontend/main.zig` | WASM: catalog, packed-string `build_row` / `create_row`, exports, `js_send_post` import |
+| `src/json.zig` | `stringifyEntityCatalog`, `stringifyRecord`, `parseFieldValue`, `fieldStorage` |
+| `src/frontend/main.js` | Nav + table from catalog; packing; GET/POST/PUT/DELETE |
+| `src/frontend/index.html` | Empty shell + CSS for the sheet |
+| `src/http/main.zig` | In-memory lists; same `system`; CORS |
+| `examples/aida/src/aida.zig` | Domain Defs (vocabulary fixture) |
+| `examples/aida/src/system.zig` | Wired as `system` (Defs + demo seeds) |
+| `examples/aida/build.zig` | Consumer: `addAppFromDep` |
+| `build.zig` `addApp` | Native HTTP + WASM + copy of html/js |
+
+Nothing is written to disk at runtime. Restarting the backend restores `seeds`.

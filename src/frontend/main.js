@@ -6,6 +6,7 @@ let wasmExports = null;
 
 const importObject = {
     env: {
+        /** WASM import: `ptr`/`len` into `json_buf`. POSTs that JSON to `/{currentEntity}`. No return. */
         js_send_post: async (ptr, len) => {
             const jsonString = readMemoryString(ptr, len);
             await sendJson(`${apiBase}/${currentEntity.name}`, "POST", jsonString);
@@ -13,6 +14,7 @@ const importObject = {
     }
 };
 
+/** UTF-8 slice of WASM memory at `ptr` of `len` bytes. */
 function readMemoryString(ptr, len) {
     const memory = new Uint8Array(wasmExports.memory.buffer);
     return new TextDecoder().decode(memory.subarray(ptr, ptr + len));
@@ -30,6 +32,7 @@ function fieldByName(name) {
     return currentEntity.fields.find((field) => field.name === name);
 }
 
+/** Query-string form of a pk cell: object → JSON, boolean → `"true"`/`"false"`, else `String(value)` (empty if nullish). */
 function pkString(name, value) {
     const field = fieldByName(name);
     if (field && field.storage === "object") return JSON.stringify(value ?? {});
@@ -38,6 +41,7 @@ function pkString(name, value) {
     return String(value);
 }
 
+/** `GET`-style identity URL: `/{entity.name}?` every pk field from `row` (loaded identity, not live inputs). */
 function resourceUrl(entity, row) {
     const query = new URLSearchParams();
     for (const name of entity.pk) {
@@ -46,6 +50,7 @@ function resourceUrl(entity, row) {
     return `${apiBase}/${entity.name}?${query}`;
 }
 
+/** Widget for `field.storage`: nested `.object-fields` or `<input>`. `locked` makes pk cells read-only. Returns the element. */
 function makeInput(field, value, locked) {
     if (field.storage === "object" && field.fields) {
         const wrap = document.createElement("div");
@@ -78,6 +83,7 @@ function makeInput(field, value, locked) {
     return input;
 }
 
+/** Value of `field` under `root`: nested object, checkbox bool, number or raw string. Used inside object cells. */
 function readLeaf(root, field) {
     if (field.storage === "object" && field.fields) {
         const wrap = root.matches?.(`[data-field="${field.name}"].object-fields`)
@@ -99,6 +105,7 @@ function readLeaf(root, field) {
     return input.value ?? "";
 }
 
+/** Cell string for WASM packing: object → JSON, boolean → `"true"`/`"false"`, else the input value. */
 function readFieldValue(td, field) {
     if (field.storage === "object" && field.fields) {
         return JSON.stringify(readLeaf(td, field));
@@ -108,6 +115,7 @@ function readFieldValue(td, field) {
     return input.value ?? "";
 }
 
+/** Last WASM `error_buf` text, or a fallback if `error_len` is 0. */
 function rowBuildError() {
     const len = wasmExports.error_len();
     if (!len) return "error: could not build row JSON";
@@ -118,6 +126,7 @@ function entityIndex() {
     return catalog.findIndex((entity) => entity.name === currentEntity.name);
 }
 
+/** Rebuilds `#entity-nav` from `catalog` (`href="#name"`). No args/return. */
 function buildNav() {
     const nav = document.getElementById("entity-nav");
     nav.replaceChildren();
@@ -130,6 +139,7 @@ function buildNav() {
     }
 }
 
+/** Thead labels + tfoot alta row for `entity.fields`; Post packs cells and calls `create_row`. Does not fill tbody. */
 function buildTable(entity) {
     const table = document.getElementById("sheet-table");
     const fields = entity.fields;
@@ -172,6 +182,7 @@ function buildTable(entity) {
     });
 }
 
+/** Tbody from GET `rows`: one tr per row, pk inputs locked, Save/Delete. Uses `currentEntity`. */
 function fillTable(rows) {
     const tbody = document.querySelector("#sheet-table tbody");
     const fields = currentEntity.fields;
@@ -204,6 +215,7 @@ function rowValuesFrom(tr) {
     return currentEntity.fields.map((field, i) => readFieldValue(tr.children[i], field));
 }
 
+/** PUT: pack live cells from `tr`, `build_row`, body from `json_buf`. Query pk from loaded `row`. Status on failure. */
 async function saveRow(tr, row) {
     const status = document.getElementById("status");
     try {
@@ -217,6 +229,7 @@ async function saveRow(tr, row) {
     }
 }
 
+/** DELETE `/{entity}?pk…` from loaded `row`. No body. Status on failure. */
 async function deleteRow(row) {
     const status = document.getElementById("status");
     try {
@@ -226,6 +239,7 @@ async function deleteRow(row) {
     }
 }
 
+/** GET `/{currentEntity.name}` then `fillTable`. Writes `#status` on error. */
 function loadRows() {
     const status = document.getElementById("status");
     fetch(`${apiBase}/${currentEntity.name}`)
@@ -240,6 +254,7 @@ function loadRows() {
         });
 }
 
+/** `fetch` `method` at `url`; JSON body if `jsonString` is not null. On OK: clear Post row if POST, then `loadRows`. */
 async function sendJson(url, method, jsonString) {
     const status = document.getElementById("status");
     try {
@@ -267,6 +282,7 @@ async function sendJson(url, method, jsonString) {
     }
 }
 
+/** Packs `values` (entity field order) into `input_buf` and `lengths_buf`. Throws if over `input_len`. */
 function writeInputStrings(values) {
     const ptr = wasmExports.input_ptr();
     const cap = wasmExports.input_len();
@@ -286,6 +302,7 @@ function writeInputStrings(values) {
     });
 }
 
+/** Select catalog entity by `name` (else first). Sets hash, title, nav, table, GET. No return. */
 function selectEntity(name) {
     const entity = catalog.find((item) => item.name === name) ?? catalog[0];
     currentEntity = entity;

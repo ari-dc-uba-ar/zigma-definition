@@ -12,12 +12,14 @@
 const std = @import("std");
 const zigma = @import("zigma");
 
+/// One record instance as a JSON object. `row` is a Zig struct; writes into `buf`. Slice of that JSON, or `error.NoSpaceLeft`.
 pub fn stringifyRecord(row: anytype, buf: []u8) error{NoSpaceLeft}![]const u8 {
     var pos: usize = 0;
     try writeJsonValue(buf, &pos, row);
     return buf[0..pos];
 }
 
+/// JSON array of `stringifyRecord` for each element of `rows`. Writes into `buf`.
 pub fn stringifyRecords(rows: anytype, buf: []u8) error{NoSpaceLeft}![]const u8 {
     var pos: usize = 0;
     try writeByte(buf, &pos, '[');
@@ -30,6 +32,7 @@ pub fn stringifyRecords(rows: anytype, buf: []u8) error{NoSpaceLeft}![]const u8 
     return buf[0..pos];
 }
 
+/// `[{name,label},…]` from a completed record Info. Writes into `buf`.
 pub fn stringifyRecordSchema(rec_info: anytype, buf: []u8) error{NoSpaceLeft}![]const u8 {
     var pos: usize = 0;
     try writeByte(buf, &pos, '[');
@@ -49,6 +52,7 @@ pub fn stringifyRecordSchema(rec_info: anytype, buf: []u8) error{NoSpaceLeft}![]
     return buf[0..pos];
 }
 
+/// Page widget shape for Zig type `T`: `"text"` / `"integer"` / `"boolean"` / `"object"`. Compile error if unsupported.
 pub fn fieldStorage(comptime T: type) []const u8 {
     switch (@typeInfo(T)) {
         .pointer => |p| {
@@ -92,6 +96,7 @@ pub fn parseFieldValue(comptime T: type, bytes: []const u8) error{InvalidValue}!
     }
 }
 
+/// True if every `[]const u8` in `value` is a subslice of `input` (no unescape copies). Used after parsing a struct cell.
 fn slicesInsideInput(comptime T: type, value: T, input: []const u8) bool {
     switch (@typeInfo(T)) {
         .pointer => |p| {
@@ -111,6 +116,7 @@ fn slicesInsideInput(comptime T: type, value: T, input: []const u8) bool {
     }
 }
 
+/// One entity Info as JSON (`name`, `pk`, `uks`, `fks`, `fields` with `type`/`storage`). `completeEntity` on `entity_def`; writes into `buf`.
 pub fn stringifyEntitySchema(comptime type_defs: anytype, entity_name: []const u8, comptime entity_def: anytype, buf: []u8) error{NoSpaceLeft}![]const u8 {
     const entity_info = zigma.completeEntity(entity_def);
     var pos: usize = 0;
@@ -144,6 +150,7 @@ pub fn stringifyEntitySchema(comptime type_defs: anytype, entity_name: []const u
     return buf[0..pos];
 }
 
+/// JSON array of `stringifyEntitySchema` for every field of `entity_defs`, in that order. Writes into `buf`.
 pub fn stringifyEntityCatalog(comptime type_defs: anytype, comptime entity_defs: anytype, buf: []u8) error{NoSpaceLeft}![]const u8 {
     var pos: usize = 0;
     try writeByte(buf, &pos, '[');
@@ -156,6 +163,7 @@ pub fn stringifyEntityCatalog(comptime type_defs: anytype, comptime entity_defs:
     return buf[0..pos];
 }
 
+/// Appends the `fields` array (`name`/`label`/`type`/`storage`; nested `fields` if the Zig type is a struct). Advances `pos`.
 fn writeEntityFields(buf: []u8, pos: *usize, comptime type_defs: anytype, comptime rec: anytype, fields_info: anytype) error{NoSpaceLeft}!void {
     try writeByte(buf, pos, '[');
     inline for (@typeInfo(@TypeOf(fields_info)).@"struct".field_names, 0..) |name, i| {
@@ -187,6 +195,7 @@ fn writeEntityFields(buf: []u8, pos: *usize, comptime type_defs: anytype, compti
     try writeByte(buf, pos, ']');
 }
 
+/// Appends `"fields":[{name,storage},…]` for struct type `T` (recursive). Advances `pos`.
 fn writeNestedFields(buf: []u8, pos: *usize, comptime T: type) error{NoSpaceLeft}!void {
     const info = @typeInfo(T);
     try writeJsonString(buf, pos, "fields");
@@ -211,6 +220,7 @@ fn writeNestedFields(buf: []u8, pos: *usize, comptime T: type) error{NoSpaceLeft
     try writeByte(buf, pos, ']');
 }
 
+/// Appends a JSON object of unique-key name → field-name list. Advances `pos`.
 fn writeUks(buf: []u8, pos: *usize, uks: anytype) error{NoSpaceLeft}!void {
     try writeByte(buf, pos, '{');
     inline for (@typeInfo(@TypeOf(uks)).@"struct".field_names, 0..) |name, i| {
@@ -222,6 +232,7 @@ fn writeUks(buf: []u8, pos: *usize, uks: anytype) error{NoSpaceLeft}!void {
     try writeByte(buf, pos, '}');
 }
 
+/// Appends a JSON object of fk name → `{entity, fields}` (source→target map). Advances `pos`.
 fn writeFks(buf: []u8, pos: *usize, fks: anytype) error{NoSpaceLeft}!void {
     try writeByte(buf, pos, '{');
     inline for (@typeInfo(@TypeOf(fks)).@"struct".field_names, 0..) |name, i| {
@@ -242,6 +253,7 @@ fn writeFks(buf: []u8, pos: *usize, fks: anytype) error{NoSpaceLeft}!void {
     try writeByte(buf, pos, '}');
 }
 
+/// Appends one fk `fields` map as JSON (source name → target name). Advances `pos`.
 fn writeFkFields(buf: []u8, pos: *usize, fields: anytype) error{NoSpaceLeft}!void {
     try writeByte(buf, pos, '{');
     inline for (@typeInfo(@TypeOf(fields)).@"struct".field_names, 0..) |name, i| {
@@ -253,6 +265,7 @@ fn writeFkFields(buf: []u8, pos: *usize, fields: anytype) error{NoSpaceLeft}!voi
     try writeByte(buf, pos, '}');
 }
 
+/// Appends a JSON string array from an array, slice, or tuple of names. Advances `pos`.
 fn writeNameList(buf: []u8, pos: *usize, list: anytype) error{NoSpaceLeft}!void {
     try writeByte(buf, pos, '[');
     switch (@typeInfo(@TypeOf(list))) {
@@ -284,6 +297,7 @@ fn writeNameList(buf: []u8, pos: *usize, list: anytype) error{NoSpaceLeft}!void 
     try writeByte(buf, pos, ']');
 }
 
+/// Appends one JSON value from a Zig string, int, bool, or struct. Advances `pos`.
 fn writeJsonValue(buf: []u8, pos: *usize, value: anytype) error{NoSpaceLeft}!void {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
@@ -316,12 +330,14 @@ fn writeJsonValue(buf: []u8, pos: *usize, value: anytype) error{NoSpaceLeft}!voi
     }
 }
 
+/// Appends a decimal integer. Advances `pos`.
 fn writeInt(buf: []u8, pos: *usize, value: anytype) error{NoSpaceLeft}!void {
     var tmp: [32]u8 = undefined;
     const slice = std.fmt.bufPrint(&tmp, "{d}", .{value}) catch return error.NoSpaceLeft;
     try writeRaw(buf, pos, slice);
 }
 
+/// Coerces a name (slice, `*const [N]u8`, or `[N]u8`) to `[]const u8`. Compile error otherwise.
 fn nameSlice(name: anytype) []const u8 {
     const T = @TypeOf(name);
     switch (@typeInfo(T)) {
@@ -338,18 +354,21 @@ fn nameSlice(name: anytype) []const u8 {
     @compileError("expected a string, got " ++ @typeName(T));
 }
 
+/// Appends `s` as a JSON string (quotes, no escaping). Advances `pos`.
 fn writeJsonString(buf: []u8, pos: *usize, s: []const u8) error{NoSpaceLeft}!void {
     try writeByte(buf, pos, '"');
     try writeRaw(buf, pos, s);
     try writeByte(buf, pos, '"');
 }
 
+/// Appends one byte at `pos`. `error.NoSpaceLeft` if `buf` is full.
 fn writeByte(buf: []u8, pos: *usize, byte: u8) error{NoSpaceLeft}!void {
     if (pos.* >= buf.len) return error.NoSpaceLeft;
     buf[pos.*] = byte;
     pos.* += 1;
 }
 
+/// Appends `bytes` at `pos`. `error.NoSpaceLeft` if they do not fit.
 fn writeRaw(buf: []u8, pos: *usize, bytes: []const u8) error{NoSpaceLeft}!void {
     if (pos.* + bytes.len > buf.len) return error.NoSpaceLeft;
     @memcpy(buf[pos.*..][0..bytes.len], bytes);
