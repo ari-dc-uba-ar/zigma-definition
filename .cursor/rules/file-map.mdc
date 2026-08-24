@@ -1,0 +1,23 @@
+---
+description: Where to open files; do not scan the repo
+alwaysApply: true
+---
+
+# File map
+
+Read `AGENTS.md` for the full index. `CLAUDE.md` has design/TDD/Zig 0.17 rules. Do not grep the tree to find the right file.
+
+| Change | File(s) |
+| --- | --- |
+| Framework API or comptime checks | `src/zigma.zig` only |
+| Aida records/entities/`DefinedType` | `examples/aida/src/aida.zig` |
+| Example app (`system` + `addAppFromDep`) | `examples/aida/` |
+| Positive tests | `test/aida_test.zig` |
+| Compile-error case | `test/compile_errors/<name>.zig` + `compile_error_cases` in `build.zig` |
+| Record JSON | `src/json.zig`, `test/json_test.zig` (`test/tiny_system.zig` for non-aida) |
+| WASM page | `src/frontend/main.zig`, `src/frontend/main.js`, `src/frontend/index.html` |
+| HTTP backend | `src/http/main.zig` |
+| Build graph / modules / `addApp` | `build.zig` |
+| Package metadata | `build.zig.zon` |
+
+Agree on the step before coding. Red test first; wait for review before the fix.

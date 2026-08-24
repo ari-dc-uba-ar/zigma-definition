@@ -1,0 +1,21 @@
+---
+description: zigma public API and Def shapes
+globs: src/zigma.zig,examples/**/*.zig
+alwaysApply: false
+---
+
+# zigma framework
+
+One module: `src/zigma.zig`. Search public names; do not read the file through. Generators live in `src/json.zig`, `src/http/`, `src/frontend/` and must not be imported from here.
+
+**Types:** `TypeDef{ .Type = T }`, `common_type_defs` (`text`=`[]const u8`, `integer`=`i64`, `boolean`=`bool`). `defineTypes` validates at the declaration site (accepts `TypeDef` or the anonymous `{ .Type = ... }` shape).
+
+**Record:** `record(type_defs, .{ .field = .{ .type = "text", ... } })` validates and returns the literal unchanged. Allowed field props: `type` (required), `label`, `nullable`, `is_name` (only `true`; false is default), `description`. Unknown props → `@compileError`.
+
+**Derived:** `RecordInstanceType` (runtime values), `completeRecord` / `RecordInfoOf` / `FieldInfo` (defaults: `is_name false`, `nullable true`, label from name `_`→space, `description ""`).
+
+**Merge:** `merge(.{a, b})` like object spread; last wins; first-appearance order. `extractPk(entity)` then `merge` to inherit pk fields. `mergePk(.{pk1, pk2})` dedups names. `completeEntity` also dedups concatenated pks (`a.pk ++ b.pk`).
+
+**Entity:** `defineEntity(.{ .fields, .pk, .fks?, .uks? })` — local: pk/uk/fk **source** names exist in `fields`. `defineEntities(.{...})` — global: target entity exists; target fields are its full pk or a uk. Fk `.entity` is a **string**. Fk `.fields`: list of names or source→target map. Info fks are always maps (`completeEntity`).
+
+**Zig:** no `comptime` keyword inside framework fns (redundant in comptime scope). Use generated-struct container consts (`PkMerge`, `FkSources`, `LabelHolder`) for comptime-known values. Reflection: `std.lang.Type`, `@Struct`/`@Tuple`, not `@Type`. Tests: `expect` / `expectEqualStrings`, not `expectEqual`.

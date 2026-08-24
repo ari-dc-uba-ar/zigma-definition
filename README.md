@@ -10,12 +10,9 @@ Port a Zig de [system-definition](https://github.com/ari-dc-uba-ar/system-defini
 
 Este módulo provee el vocabulario para describir un sistema — tipos de dominio, entidades,
 campos, claves primarias, claves únicas, claves foráneas — como valores comptime fuertemente
-tipados y serializables. A partir de esas descripciones, generadores de código o
-implementaciones on-the-fly pueden derivar los scripts de creación de tablas, los endpoints
-CRUD con su capa de base de datos, las pantallas del frontend, los serializadores en ambos
-sentidos, los validadores de tipo, etc.
-
-Este módulo cubre solo la parte descriptiva de los sistemas: no genera nada por sí mismo.
+tipados y serializables. A partir de esas descripciones, generadores derivan JSON,
+endpoints CRUD en memoria y la página WASM. El descriptor (`zigma`) no importa a los
+generadores; los generadores leen Infos.
 
 ## Convención de nombres: Def e Info
 
@@ -101,7 +98,7 @@ escrito como lista) y las uks (tal cual, o vacías si no se declararon).
 
 ## Ejemplo: sistema de alumnos (aida)
 
-`examples/aida.zig` describe un sistema de alumnos con este vocabulario. Incluye entidades
+`examples/aida/src/aida.zig` describe un sistema de alumnos con este vocabulario. Incluye entidades
 independientes (`docentes`, `materias`, `periodos`, `alumnos`) y entidades que heredan claves
 de otras:
 
@@ -122,12 +119,15 @@ rechazos esperados en compilación, que viven aparte como fragmentos en `test/co
 
 ## Estructura
 
-* `src/zigma.zig`: el framework descriptor (módulo `zigma`); no conoce ningún sistema
-  concreto.
-* `examples/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`).
+* `src/zigma.zig`: el descriptor (módulo `zigma`); no conoce ningún sistema concreto ni importa generadores.
+* `src/json.zig`: generador JSON (módulo `zigma_json`).
+* `src/http/main.zig` y `src/frontend/`: generadores HTTP y WASM; reciben un módulo `system` (`type_defs` + `entity_defs`).
+* `examples/aida/src/aida.zig`: el sistema de alumnos (módulo `aida`); fixture de tests.
+* `examples/aida/`: app de ejemplo (dependencia path al framework; `src/system.zig` + `build.zig`).
 * `test/aida_test.zig`: los tests positivos.
 * `test/compile_errors/*.zig`: fragmentos que deben fallar la compilación, con el mensaje de
   error esperado listado en `build.zig`.
+* `addApp` / `addAppFromDep` en `build.zig`: el punto de uso. La librería no instala la demo; `examples/aida/` es el consumidor.
 
 ## Forma de trabajo
 
@@ -157,7 +157,20 @@ const zigma = b.dependency("zigma_definition", .{}).module("zigma");
 exe.root_module.addImport("zigma", zigma);
 ```
 
-El paquete también exporta `aida`, descripto en `examples/aida.zig`.
+El paquete exporta `zigma` y `zigma_json`. También exporta `aida` (`examples/aida/src/aida.zig`) como
+ejemplo. Para generar backend + frontend desde un archivo `system` (como hace `examples/aida/build.zig`):
+
+```zig
+const zigma_def = b.dependency("zigma_definition", .{});
+const zigma_build = @import("zigma_definition");
+_ = zigma_build.addAppFromDep(b, zigma_def, .{
+    .system_root = b.path("src/system.zig"),
+    .target = target,
+    .optimize = optimize,
+});
+```
+
+`system.zig` debe exportar `type_defs` y `entity_defs` (y opcionalmente `seeds`).
 
 ## Licencia
 

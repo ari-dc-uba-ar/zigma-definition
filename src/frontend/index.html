@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>zigma</title>
+    <style>
+      nav#entity-nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        margin-bottom: 1rem;
+      }
+      nav#entity-nav a {
+        padding: 0.25rem 0.6rem;
+        border: 1px solid #888;
+        text-decoration: none;
+        color: inherit;
+        background: #f3f3f3;
+      }
+      nav#entity-nav a.selected {
+        background: #ddd;
+        font-weight: 600;
+      }
+      table.sheet {
+        border-collapse: collapse;
+        margin-bottom: 1.5rem;
+      }
+      table.sheet th,
+      table.sheet td {
+        border: 1px solid #888;
+        padding: 0;
+      }
+      table.sheet th {
+        background: #ddd;
+        padding: 0.3rem 0.6rem;
+        text-align: left;
+        font-weight: 600;
+      }
+      table.sheet td input {
+        display: block;
+        width: 16rem;
+        border: none;
+        padding: 0.3rem 0.6rem;
+        font: inherit;
+        background: transparent;
+      }
+      table.sheet td .object-fields {
+        display: flex;
+        gap: 0;
+      }
+      table.sheet td .object-fields input {
+        width: 5rem;
+        border-right: 1px solid #ccc;
+      }
+      table.sheet td .object-fields input:last-child {
+        border-right: none;
+      }
+      table.sheet td input:read-only,
+      table.sheet td input:disabled {
+        background: #eee;
+        color: #444;
+      }
+      table.sheet td.action {
+        border: none;
+        padding: 0 0.4rem;
+        vertical-align: middle;
+        white-space: nowrap;
+      }
+      table.sheet td.action button + button {
+        margin-left: 0.3rem;
+      }
+    </style>
+  </head>
+  <body>
+    <nav id="entity-nav"></nav>
+    <h1 id="sheet-title"></h1>
+    <table id="sheet-table" class="sheet">
+      <thead></thead>
+      <tbody></tbody>
+      <tfoot></tfoot>
+    </table>
+    <p id="status">Loading WASM…</p>
+    <script src="main.js"></script>
+  </body>
+</html>
