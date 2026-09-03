@@ -122,7 +122,7 @@ The library `zig build` at the repo root does **not** install this app. Generato
 
 ### 3.2 Page load → catalog → first table
 
-Triggered by the browser loading `index.html` (`<script src="main.js">`). Status text starts as `Loading WASM…`.
+Triggered by the browser loading `index.html` (`<script src="main.js">`). Status text starts as `Loading...`.
 
 ```
 browser
@@ -159,7 +159,7 @@ main.js  (top level)
        │
        │    fromHash = location.hash without '#'
        │    selectEntity(fromHash || catalog[0].name)
-       │    status ← "Ready." if it was still "Loading WASM…"
+       │    status cleared after load (no "Ready.")
        │    addEventListener("hashchange", …)
        │
        └─ [failure]
@@ -192,7 +192,7 @@ selectEntity(name)
   │      for each field:
   │        td.appendChild(makeInput(field, default, locked=false))
   │          default: boolean → false, object → {}, else ""
-  │      button#post-row "Post" + click listener  → see §3.5
+  │      button#post-row "New" + click listener  → see §3.5
   └─ loadRows()  → see §3.4
 ```
 
@@ -205,7 +205,7 @@ makeInput(field, value, locked)
     for each nested field: append makeInput(sub, obj[sub.name], locked)
   else:
     <input data-field=name autocomplete=off>
-    integer → type=number, value
+    integer → type=text, inputmode=numeric, value
     boolean → type=checkbox, checked if true / "true"
     else    → type=text, value
     if locked: boolean → disabled; else readOnly; tabIndex = -1
@@ -272,7 +272,7 @@ The `row` closed over by Save/Delete is the **original GET object**, not a live 
 Click `#post-row`. WASM builds a typed instance, stringifies it, and asks JS to POST. JS does **not** `fetch` POST itself except via the WASM import.
 
 ```
-click Post
+click New
   values = fields.map((field, i) => readFieldValue(newRow.children[i], field))
   try:
     writeInputStrings(values)

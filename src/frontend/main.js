@@ -66,7 +66,9 @@ function makeInput(field, value, locked) {
     input.dataset.field = field.name;
     input.autocomplete = "off";
     if (field.storage === "integer") {
-        input.type = "number";
+        input.type = "text";
+        input.inputMode = "numeric";
+        input.className = "input-integer";
         input.value = value ?? "";
     } else if (field.storage === "boolean") {
         input.type = "checkbox";
@@ -97,11 +99,6 @@ function readLeaf(root, field) {
     }
     const input = root.querySelector(`input[data-field="${field.name}"]`);
     if (field.storage === "boolean") return input.checked;
-    if (field.storage === "integer") {
-        if (!input.value) return "";
-        const n = Number(input.value);
-        return Number.isFinite(n) ? n : input.value;
-    }
     return input.value ?? "";
 }
 
@@ -124,6 +121,49 @@ function rowBuildError() {
 
 function entityIndex() {
     return catalog.findIndex((entity) => entity.name === currentEntity.name);
+}
+
+function clearStatus() {
+    const status = document.getElementById("status");
+    status.textContent = "";
+    status.classList.remove("network");
+}
+
+function showNetworkError(message) {
+    const status = document.getElementById("status");
+    status.textContent = message;
+    status.classList.add("network");
+}
+
+function clearCellErrors() {
+    document.querySelectorAll("#sheet-table td.cell-error").forEach((td) => {
+        td.classList.remove("cell-error");
+        td.removeAttribute("title");
+    });
+}
+
+function fieldErrorName(message) {
+    const match = /^error: (.+): not /.exec(message);
+    return match ? match[1] : null;
+}
+
+function markCellError(td, message) {
+    td.classList.add("cell-error");
+    td.title = message;
+}
+
+function showRowBuildError(tr, message) {
+    clearCellErrors();
+    clearStatus();
+    const name = fieldErrorName(message);
+    const index = name ? currentEntity.fields.findIndex((field) => field.name === name) : -1;
+    if (index >= 0 && tr.children[index]) {
+        markCellError(tr.children[index], message);
+        return;
+    }
+    for (let i = 0; i < currentEntity.fields.length; i++) {
+        markCellError(tr.children[i], message);
+    }
 }
 
 /** Rebuilds `#entity-nav` from `catalog` (`href="#name"`). No args/return. */
@@ -165,10 +205,11 @@ function buildTable(entity) {
     const button = document.createElement("button");
     button.type = "button";
     button.id = "post-row";
-    button.textContent = "Post";
+    button.textContent = "New";
     action.appendChild(button);
     newRow.appendChild(action);
     table.tFoot.replaceChildren(newRow);
+    fitSheetColumns();
 
     button.addEventListener("click", () => {
         const values = fields.map((field, i) => readFieldValue(newRow.children[i], field));
@@ -177,7 +218,7 @@ function buildTable(entity) {
             const len = wasmExports.create_row(entityIndex());
             if (!len) throw new Error(rowBuildError());
         } catch (err) {
-            document.getElementById("status").textContent = err instanceof Error ? err.message : String(err);
+            showRowBuildError(newRow, err instanceof Error ? err.message : String(err));
         }
     });
 }
@@ -198,7 +239,9 @@ function fillTable(rows) {
         action.className = "action";
         const save = document.createElement("button");
         save.type = "button";
+        save.className = "save-row";
         save.textContent = "Save";
+        save.disabled = true;
         save.addEventListener("click", () => saveRow(tr, row));
         const del = document.createElement("button");
         del.type = "button";
@@ -208,16 +251,119 @@ function fillTable(rows) {
         action.appendChild(del);
         tr.appendChild(action);
         tbody.appendChild(tr);
+        setRowBaseline(tr);
     }
+    fitSheetColumns();
+}
+
+let measureEl = null;
+let fitFrame = 0;
+
+function textWidth(text, styleSource) {
+    if (!measureEl) {
+        measureEl = document.createElement("span");
+        measureEl.style.cssText = "position:absolute;left:-9999px;top:0;white-space:pre;visibility:hidden";
+        document.body.appendChild(measureEl);
+    }
+    measureEl.style.font = getComputedStyle(styleSource).font;
+    measureEl.textContent = text.length ? text : " ";
+    return measureEl.offsetWidth;
+}
+
+function inputContentWidth(input) {
+    if (input.type === "checkbox") return 28;
+    const cs = getComputedStyle(input);
+    return textWidth(input.value, input) + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + 2;
+}
+
+function cellContentWidth(cell) {
+    if (cell.classList.contains("action") || cell.querySelector(":scope > button")) {
+        const cs = getComputedStyle(cell);
+        const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+        const border = parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+        let content = 0;
+        cell.querySelectorAll(":scope > button").forEach((button, i) => {
+            content += button.offsetWidth;
+            if (i > 0) content += parseFloat(getComputedStyle(button).marginLeft) || 0;
+        });
+        return content + pad + border;
+    }
+    if (cell.tagName === "TH") {
+        return textWidth(cell.textContent, cell) + 16;
+    }
+    const wrap = cell.querySelector(".object-fields");
+    if (wrap) {
+        let width = 0;
+        wrap.querySelectorAll("input").forEach((input) => {
+            width += Math.max(inputContentWidth(input), input.offsetWidth);
+        });
+        return width;
+    }
+    const input = cell.querySelector("input");
+    return input ? inputContentWidth(input) : 0;
+}
+
+/** Sizes each column to the widest header or cell. Table width is the sum; it does not stretch to the viewport. */
+function fitSheetColumns() {
+    const table = document.getElementById("sheet-table");
+    const header = table.tHead?.rows[0];
+    if (!header) return;
+    const n = header.cells.length;
+    const widths = Array(n).fill(24);
+    for (const row of table.rows) {
+        for (let i = 0; i < n; i++) {
+            const cell = row.cells[i];
+            if (cell) widths[i] = Math.max(widths[i], cellContentWidth(cell));
+        }
+    }
+    let colgroup = table.querySelector("colgroup");
+    if (!colgroup) {
+        colgroup = document.createElement("colgroup");
+        table.prepend(colgroup);
+    }
+    colgroup.replaceChildren();
+    let total = 0;
+    for (const width of widths) {
+        const col = document.createElement("col");
+        const px = Math.ceil(width);
+        col.style.width = `${px}px`;
+        total += px;
+        colgroup.appendChild(col);
+    }
+    table.style.tableLayout = "fixed";
+    table.style.width = `${total}px`;
+}
+
+function scheduleFitSheetColumns() {
+    if (fitFrame) return;
+    fitFrame = requestAnimationFrame(() => {
+        fitFrame = 0;
+        fitSheetColumns();
+    });
 }
 
 function rowValuesFrom(tr) {
     return currentEntity.fields.map((field, i) => readFieldValue(tr.children[i], field));
 }
 
-/** PUT: pack live cells from `tr`, `build_row`, body from `json_buf`. Query pk from loaded `row`. Status on failure. */
+function setRowBaseline(tr) {
+    tr.dataset.baseline = JSON.stringify(rowValuesFrom(tr));
+}
+
+function isRowDirty(tr) {
+    if (!tr.dataset.baseline) return false;
+    return tr.dataset.baseline !== JSON.stringify(rowValuesFrom(tr));
+}
+
+/** Enables Save only when live cell values differ from the baseline captured at load. */
+function updateSaveButton(tr) {
+    const save = tr.querySelector("button.save-row");
+    if (!save) return;
+    save.disabled = !isRowDirty(tr);
+}
+
+/** PUT: pack live cells from `tr`, `build_row`, body from `json_buf`. Query pk from loaded `row`. */
 async function saveRow(tr, row) {
-    const status = document.getElementById("status");
     try {
         writeInputStrings(rowValuesFrom(tr));
         const len = wasmExports.build_row(entityIndex());
@@ -225,38 +371,39 @@ async function saveRow(tr, row) {
         const jsonString = readMemoryString(wasmExports.json_ptr(), len);
         await sendJson(resourceUrl(currentEntity, row), "PUT", jsonString);
     } catch (err) {
-        status.textContent = err instanceof Error ? err.message : String(err);
+        showRowBuildError(tr, err instanceof Error ? err.message : String(err));
     }
 }
 
-/** DELETE `/{entity}?pk…` from loaded `row`. No body. Status on failure. */
+/** DELETE `/{entity}?pk…` from loaded `row`. No body. Network errors go to the top bar. */
 async function deleteRow(row) {
-    const status = document.getElementById("status");
     try {
         await sendJson(resourceUrl(currentEntity, row), "DELETE", null);
     } catch (err) {
-        status.textContent = String(err);
+        showNetworkError(String(err));
+        console.error(err);
     }
 }
 
-/** GET `/{currentEntity.name}` then `fillTable`. Writes `#status` on error. */
+/** GET `/{currentEntity.name}` then `fillTable`. Network errors go to the top bar. */
 function loadRows() {
-    const status = document.getElementById("status");
     fetch(`${apiBase}/${currentEntity.name}`)
         .then((response) => {
-            if (!response.ok) throw new Error(`GET /${currentEntity.name} ${response.status}`);
+            if (!response.ok) throw new Error(`Could not load ${currentEntity.name} (${response.status})`);
             return response.json();
         })
-        .then(fillTable)
+        .then((rows) => {
+            clearStatus();
+            fillTable(rows);
+        })
         .catch((err) => {
-            status.textContent = String(err);
+            showNetworkError(String(err));
             console.error(err);
         });
 }
 
-/** `fetch` `method` at `url`; JSON body if `jsonString` is not null. On OK: clear Post row if POST, then `loadRows`. */
+/** `fetch` `method` at `url`; JSON body if `jsonString` is not null. On OK: refresh the table, no success text. */
 async function sendJson(url, method, jsonString) {
-    const status = document.getElementById("status");
     try {
         const init = { method };
         if (jsonString != null) {
@@ -264,20 +411,24 @@ async function sendJson(url, method, jsonString) {
             init.body = jsonString;
         }
         const response = await fetch(url, init);
-        const result = await response.json();
-        status.textContent = JSON.stringify(result);
-        console.log("Server response:", result);
-        if (response.ok) {
-            if (method === "POST") {
-                document.querySelectorAll("#new-row input").forEach((input) => {
-                    if (input.type === "checkbox") input.checked = false;
-                    else input.value = "";
-                });
-            }
-            loadRows();
+        const result = await response.json().catch(() => null);
+        if (!response.ok) {
+            showNetworkError(`Could not ${method} ${currentEntity.name} (${response.status})`);
+            console.error("Server response:", result);
+            return;
         }
+        console.log("Server response:", result);
+        clearCellErrors();
+        clearStatus();
+        if (method === "POST") {
+            document.querySelectorAll("#new-row input").forEach((input) => {
+                if (input.type === "checkbox") input.checked = false;
+                else input.value = "";
+            });
+        }
+        loadRows();
     } catch (err) {
-        status.textContent = String(err);
+        showNetworkError(String(err));
         console.error(err);
     }
 }
@@ -313,21 +464,36 @@ function selectEntity(name) {
     loadRows();
 }
 
+document.getElementById("sheet-table").addEventListener("input", (event) => {
+    const td = event.target.closest("td");
+    if (td) {
+        td.classList.remove("cell-error");
+        td.removeAttribute("title");
+    }
+    const tr = event.target.closest("tbody tr");
+    if (tr) updateSaveButton(tr);
+    scheduleFitSheetColumns();
+});
+document.getElementById("sheet-table").addEventListener("change", (event) => {
+    const tr = event.target.closest("tbody tr");
+    if (tr) updateSaveButton(tr);
+    scheduleFitSheetColumns();
+});
+
 WebAssembly.instantiateStreaming(fetch("frontend.wasm"), importObject)
     .then((obj) => {
         wasmExports = obj.instance.exports;
         window.wasmInstance = obj.instance;
-        const status = document.getElementById("status");
         catalog = JSON.parse(readWasmString(wasmExports.schema_ptr, wasmExports.schema_len));
         const fromHash = location.hash.replace(/^#/, "");
         selectEntity(fromHash || catalog[0].name);
-        if (status.textContent === "Loading WASM…") status.textContent = "Ready.";
+        clearStatus();
         window.addEventListener("hashchange", () => {
             const name = location.hash.replace(/^#/, "");
             if (name && currentEntity && name !== currentEntity.name) selectEntity(name);
         });
     })
     .catch((err) => {
-        document.getElementById("status").textContent = String(err);
+        showNetworkError(String(err));
         console.error(err);
     });

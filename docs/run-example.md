@@ -25,7 +25,7 @@ zig build frontend
 python3 -m http.server 8000 --directory zig-out/frontend
 ```
 
-**Browser:** open <http://localhost:8000/>. After WASM loads, a nav of entity names appears and the first catalog entity is shown (in aida, `docentes`), then filled from `GET /{entity}`, plus an empty row at the bottom. Open `#materias` for that table (labels `materia` / `denominación`). Fill that last row and click **Post**. You should see `{"status":"received"}` on the page, the backend should print the JSON, the new row should appear in the table, and the last row should be empty again for the next alta. **Save** on an existing row sends `PUT /{entity}?pk…` and replaces that row (pk cells are locked). **Delete** sends `DELETE /{entity}?pk…` with no body. Other entities are the same at `#docentes`, `#clases`, etc. The lists live in the backend process only (restarting it restores the seeds).
+**Browser:** open <http://localhost:8000/>. After WASM loads, a nav of entity names appears and the first catalog entity is shown (in aida, `docentes`), then filled from `GET /{entity}`, plus an empty row at the bottom. Open `#materias` for that table (labels `materia` / `denominación`). Fill that last row and click **New**. The backend should print the JSON, the new row should appear in the table, and the last row should be empty again for the next alta. **Save** on an existing row sends `PUT /{entity}?pk…` and replaces that row (pk cells are locked). **Delete** sends `DELETE /{entity}?pk…` with no body. Other entities are the same at `#docentes`, `#clases`, etc. The lists live in the backend process only (restarting it restores the seeds).
 
 Every entity is seeded with at least two rows (FKs point at those pks). Restarting the backend restores the seeds.
 
@@ -68,7 +68,7 @@ Leave this running.
 
 ## 3. Run the frontend
 
-On WASM load, `main.js` reads `schema_ptr`/`schema_len` (the entity catalog), builds the nav and the selected table, then fetches that entity's list. **Post** packs the empty-row values into WASM memory and calls `create_row`, which builds a typed record instance and POSTs JSON. **Save** on a tbody row calls `build_row` and `PUT`s `/{entity}?pk…` (pk cells are locked). **Delete** sends `DELETE /{entity}?pk…` with no body. On success the page GETs the list again. Serve that directory (a second terminal, still under `examples/aida/`):
+On WASM load, `main.js` reads `schema_ptr`/`schema_len` (the entity catalog), builds the nav and the selected table, then fetches that entity's list. **New** packs the empty-row values into WASM memory and calls `create_row`, which builds a typed record instance and POSTs JSON. **Save** on a tbody row calls `build_row` and `PUT`s `/{entity}?pk…` (pk cells are locked). **Delete** sends `DELETE /{entity}?pk…` with no body. On success the page GETs the list again. Serve that directory (a second terminal, still under `examples/aida/`):
 
 ```sh
 python3 -m http.server 8000 --directory zig-out/frontend
@@ -76,7 +76,7 @@ python3 -m http.server 8000 --directory zig-out/frontend
 
 Open <http://localhost:8000/> (or `http://localhost:8000/index.html`).
 
-If the table stays empty, check that the backend is on 8080 and that WASM loaded (status should leave “Loading WASM…”). If the POST never appears, check that `zig-out/frontend/frontend.wasm` is the file you just built, and that the static server is serving `application/wasm` for `.wasm` (Python’s `http.server` usually does).
+If the table stays empty, check that the backend is on 8080 and that WASM loaded (status should leave “Loading...”). If the POST never appears, check that `zig-out/frontend/frontend.wasm` is the file you just built, and that the static server is serving `application/wasm` for `.wasm` (Python’s `http.server` usually does).
 
 The library `zig build` at the repo root does **not** install this app.
 
