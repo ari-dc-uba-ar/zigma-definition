@@ -5,6 +5,8 @@ let currentEntity = null;
 let wasmExports = null;
 /** Domain type name → `{ make, read }` from optional `./widgets.js`. */
 let widgets = {};
+/** `GET /{entity}` rows keyed by entity name (current sheet + fk targets). */
+let relatedByEntity = {};
 
 const importObject = {
     env: {
@@ -30,17 +32,74 @@ function isPkField(field) {
     return currentEntity.pk.includes(field.name);
 }
 
+/** True if `name` is a source field of any fk on `entity`. */
+function isFkSource(entity, name) {
+    const fks = entity.fks;
+    if (!fks) return false;
+    for (const fk of Object.values(fks)) {
+        if (fk.fields && Object.prototype.hasOwnProperty.call(fk.fields, name)) return true;
+    }
+    return false;
+}
+
+/** `"pk"` / `"fk"` / `"pk fk"` from `entity.pk` and fk source fields. Empty if neither. */
+function fieldKeyClass(entity, field) {
+    const names = [];
+    if (entity.pk.includes(field.name)) names.push("pk");
+    if (isFkSource(entity, field.name)) names.push("fk");
+    return names.join(" ");
+}
+
 function fieldByName(name) {
     return currentEntity.fields.find((field) => field.name === name);
 }
 
-/** Query-string form of a pk cell: object → JSON, boolean → `"true"`/`"false"`, else `String(value)` (empty if nullish). */
-function pkString(name, value) {
-    const field = fieldByName(name);
+function entityByName(name) {
+    return catalog.find((entity) => entity.name === name);
+}
+
+/** Distinct `fk.entity` names on `entity`. */
+function fkTargetNames(entity) {
+    const names = new Set();
+    const fks = entity.fks;
+    if (!fks) return names;
+    for (const fk of Object.values(fks)) {
+        if (fk.entity) names.add(fk.entity);
+    }
+    return names;
+}
+
+/** Single-field fk whose only source is `fieldName`, or null. */
+function simpleFk(entity, fieldName) {
+    const fks = entity.fks;
+    if (!fks) return null;
+    for (const fk of Object.values(fks)) {
+        const fields = fk.fields;
+        if (!fields) continue;
+        const sources = Object.keys(fields);
+        if (sources.length === 1 && sources[0] === fieldName) return fk;
+    }
+    return null;
+}
+
+/** Cell string for a field value: object → JSON, boolean → `"true"`/`"false"`, else `String(value)` (empty if nullish). */
+function cellString(field, value) {
     if (field && field.storage === "object") return JSON.stringify(value ?? {});
     if (field && field.storage === "boolean") return value === true || value === "true" ? "true" : "false";
     if (value == null) return "";
     return String(value);
+}
+
+/** Target row label: `is_name` fields joined, else the pk. */
+function displayName(entity, row) {
+    const named = entity.fields.filter((field) => field.is_name);
+    const fields = named.length ? named : entity.fields.filter((field) => entity.pk.includes(field.name));
+    return fields.map((field) => cellString(field, row[field.name])).join(" ").trim();
+}
+
+/** Query-string form of a pk cell: object → JSON, boolean → `"true"`/`"false"`, else `String(value)` (empty if nullish). */
+function pkString(name, value) {
+    return cellString(fieldByName(name), value);
 }
 
 /** `GET`-style identity URL: `/{entity.name}?` every pk field from `row` (loaded identity, not live inputs). */
@@ -58,6 +117,10 @@ function widgetFor(field) {
 
 /** Widget for `field.type` if the consumer registered one, else `field.storage`. `locked` makes pk cells read-only. Returns the element. */
 function makeInput(field, value, locked) {
+    if (currentEntity.fields.includes(field)) {
+        const fk = simpleFk(currentEntity, field.name);
+        if (fk) return makeFkSelect(field, value, locked, fk);
+    }
     const widget = widgetFor(field);
     if (widget?.make) return widget.make(field, value, locked);
     if (field.storage === "object" && field.fields) {
@@ -86,11 +149,74 @@ function makeInput(field, value, locked) {
         input.value = value ?? "";
     }
     if (locked) {
-        if (field.storage === "boolean") input.disabled = true;
-        else input.readOnly = true;
+        input.disabled = true;
         input.tabIndex = -1;
     }
     return input;
+}
+
+/** Target-row label for `optVal`, or `optVal` if that row is missing. */
+function fkLabel(target, targetField, targetFieldName, rows, optVal) {
+    if (!optVal) return "";
+    for (const row of rows) {
+        if (cellString(targetField, row[targetFieldName]) === optVal) {
+            return (target && displayName(target, row)) || optVal;
+        }
+    }
+    return optVal;
+}
+
+/** One-column fk: `<select>` when editable; locked pk+fk is a label (pk kept in a hidden input). */
+function makeFkSelect(field, value, locked, fk) {
+    const target = entityByName(fk.entity);
+    const targetFieldName = fk.fields[field.name];
+    const targetField = target?.fields.find((item) => item.name === targetFieldName);
+    const rows = relatedByEntity[fk.entity] ?? [];
+    const current = cellString(field, value);
+
+    if (locked) {
+        const wrap = document.createElement("div");
+        wrap.className = "fk-locked";
+        const hidden = document.createElement("input");
+        hidden.type = "hidden";
+        hidden.dataset.field = field.name;
+        hidden.value = current;
+        const shown = document.createElement("input");
+        shown.type = "text";
+        shown.disabled = true;
+        shown.tabIndex = -1;
+        shown.value = fkLabel(target, targetField, targetFieldName, rows, current);
+        wrap.appendChild(hidden);
+        wrap.appendChild(shown);
+        return wrap;
+    }
+
+    const select = document.createElement("select");
+    select.dataset.field = field.name;
+    select.autocomplete = "off";
+
+    const blank = document.createElement("option");
+    blank.value = "";
+    select.appendChild(blank);
+
+    const seen = new Set();
+    for (const row of rows) {
+        const optVal = cellString(targetField, row[targetFieldName]);
+        if (seen.has(optVal)) continue;
+        seen.add(optVal);
+        const opt = document.createElement("option");
+        opt.value = optVal;
+        opt.textContent = (target && displayName(target, row)) || optVal;
+        select.appendChild(opt);
+    }
+    if (current && !seen.has(current)) {
+        const opt = document.createElement("option");
+        opt.value = current;
+        opt.textContent = current;
+        select.appendChild(opt);
+    }
+    select.value = current;
+    return select;
 }
 
 /** Value of `field` under `root`: nested object, checkbox bool, or raw string. Used inside object cells. */
@@ -107,9 +233,11 @@ function readLeaf(root, field) {
         }
         return obj;
     }
-    const input = root.querySelector(`input[data-field="${field.name}"]`);
-    if (field.storage === "boolean") return input.checked;
-    return input.value ?? "";
+    const control = root.querySelector(`[data-field="${field.name}"]`);
+    if (!control) return "";
+    if (control.tagName === "SELECT") return control.value;
+    if (field.storage === "boolean") return control.checked;
+    return control.value ?? "";
 }
 
 /** Cell string for WASM packing: object → JSON, boolean → `"true"`/`"false"`, else the input value. */
@@ -123,7 +251,9 @@ function readFieldValue(td, field) {
     if (field.storage === "object" && field.fields) {
         return JSON.stringify(readLeaf(td, field));
     }
-    const input = td.querySelector(`input[data-field="${field.name}"]`);
+    const input = td.querySelector(`[data-field="${field.name}"]`);
+    if (!input) return "";
+    if (input.tagName === "SELECT") return input.value ?? "";
     if (field.storage === "boolean") return input.checked ? "true" : "false";
     return input.value ?? "";
 }
@@ -204,6 +334,7 @@ function buildTable(entity) {
     for (const field of fields) {
         const th = document.createElement("th");
         th.textContent = field.label;
+        th.className = fieldKeyClass(entity, field);
         headerRow.appendChild(th);
     }
     headerRow.appendChild(document.createElement("th"));
@@ -213,6 +344,7 @@ function buildTable(entity) {
     newRow.id = "new-row";
     for (const field of fields) {
         const td = document.createElement("td");
+        td.className = fieldKeyClass(entity, field);
         td.appendChild(makeInput(field, field.storage === "boolean" ? false : field.storage === "object" ? {} : ""));
         newRow.appendChild(td);
     }
@@ -248,6 +380,7 @@ function fillTable(rows) {
         const tr = document.createElement("tr");
         for (const field of fields) {
             const td = document.createElement("td");
+            td.className = fieldKeyClass(currentEntity, field);
             td.appendChild(makeInput(field, row[field.name], isPkField(field)));
             tr.appendChild(td);
         }
@@ -317,7 +450,17 @@ function cellContentWidth(cell) {
         });
         return width;
     }
-    const input = cell.querySelector("input");
+    const select = cell.querySelector("select");
+    if (select) {
+        const cs = getComputedStyle(select);
+        const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+        let width = 24;
+        for (const opt of select.options) {
+            width = Math.max(width, textWidth(opt.textContent, select));
+        }
+        return width + pad + 22;
+    }
+    const input = cell.querySelector("input:not([type=hidden])");
     return input ? inputContentWidth(input) : 0;
 }
 
@@ -403,13 +546,20 @@ async function deleteRow(row) {
     }
 }
 
+/** GET `/{name}` and store the list in `relatedByEntity`. */
+function fetchEntityRows(name) {
+    return fetch(`${apiBase}/${name}`).then((response) => {
+        if (!response.ok) throw new Error(`Could not load ${name} (${response.status})`);
+        return response.json();
+    }).then((rows) => {
+        relatedByEntity[name] = rows;
+        return rows;
+    });
+}
+
 /** GET `/{currentEntity.name}` then `fillTable`. Network errors go to the top bar. */
 function loadRows() {
-    fetch(`${apiBase}/${currentEntity.name}`)
-        .then((response) => {
-            if (!response.ok) throw new Error(`Could not load ${currentEntity.name} (${response.status})`);
-            return response.json();
-        })
+    fetchEntityRows(currentEntity.name)
         .then((rows) => {
             clearStatus();
             fillTable(rows);
@@ -417,6 +567,23 @@ function loadRows() {
         .catch((err) => {
             showNetworkError(String(err));
             console.error(err);
+        });
+}
+
+/** Current entity plus each distinct fk target. Then thead/tfoot and tbody. */
+function loadSheet() {
+    const names = new Set([currentEntity.name, ...fkTargetNames(currentEntity)]);
+    Promise.all([...names].map(fetchEntityRows))
+        .then(() => {
+            clearStatus();
+            buildTable(currentEntity);
+            fillTable(relatedByEntity[currentEntity.name] || []);
+        })
+        .catch((err) => {
+            showNetworkError(String(err));
+            console.error(err);
+            buildTable(currentEntity);
+            fillTable(relatedByEntity[currentEntity.name] || []);
         });
 }
 
@@ -442,6 +609,9 @@ async function sendJson(url, method, jsonString) {
             document.querySelectorAll("#new-row input").forEach((input) => {
                 if (input.type === "checkbox") input.checked = false;
                 else input.value = "";
+            });
+            document.querySelectorAll("#new-row select").forEach((select) => {
+                select.value = "";
             });
         }
         loadRows();
@@ -478,8 +648,7 @@ function selectEntity(name) {
     location.hash = entity.name;
     document.getElementById("sheet-title").textContent = entity.name;
     buildNav();
-    buildTable(entity);
-    loadRows();
+    loadSheet();
 }
 
 document.getElementById("sheet-table").addEventListener("input", (event) => {

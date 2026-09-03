@@ -59,16 +59,16 @@ test "stringifies a record schema from completeRecord" {
 test "stringifies an entity schema from completeEntity" {
     var buf: [512]u8 = undefined;
     try expectEqualStrings(
-        "{\"name\":\"materias\",\"pk\":[\"materia\"],\"uks\":{\"denominacion\":[\"denominacion\"]},\"fks\":{},\"fields\":[{\"name\":\"materia\",\"label\":\"materia\",\"type\":\"text\",\"storage\":\"text\"},{\"name\":\"denominacion\",\"label\":\"denominación\",\"type\":\"text\",\"storage\":\"text\"}]}",
+        "{\"name\":\"materias\",\"pk\":[\"materia\"],\"uks\":{\"denominacion\":[\"denominacion\"]},\"fks\":{},\"fields\":[{\"name\":\"materia\",\"label\":\"materia\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"denominacion\",\"label\":\"denominación\",\"type\":\"text\",\"is_name\":true,\"storage\":\"text\"}]}",
         try zigma_json.stringifyEntitySchema(aida.type_defs, "materias", aida.materias, &buf),
     );
 }
 
 test "stringifies entity fks as source-to-target maps" {
-    var buf: [1024]u8 = undefined;
+    var buf: [2048]u8 = undefined;
     const json = try zigma_json.stringifyEntitySchema(aida.type_defs, "docentes", aida.docentes, &buf);
     try expectEqualStrings(
-        "{\"name\":\"docentes\",\"pk\":[\"docente\"],\"uks\":{},\"fks\":{\"jefe\":{\"entity\":\"docentes\",\"fields\":{\"jefe\":\"docente\"}}},\"fields\":[{\"name\":\"docente\",\"label\":\"docente\",\"type\":\"text\",\"storage\":\"text\"},{\"name\":\"apellido\",\"label\":\"apellido\",\"type\":\"text\",\"storage\":\"text\"},{\"name\":\"nombres\",\"label\":\"nombres\",\"type\":\"text\",\"storage\":\"text\"},{\"name\":\"cargo\",\"label\":\"cargo\",\"type\":\"text\",\"storage\":\"text\"},{\"name\":\"email\",\"label\":\"email\",\"type\":\"email\",\"storage\":\"text\"},{\"name\":\"email_alternativo\",\"label\":\"email alternativo\",\"type\":\"email\",\"storage\":\"text\"},{\"name\":\"jefe\",\"label\":\"jefe\",\"type\":\"text\",\"storage\":\"text\"}]}",
+        "{\"name\":\"docentes\",\"pk\":[\"docente\"],\"uks\":{},\"fks\":{\"jefe\":{\"entity\":\"docentes\",\"fields\":{\"jefe\":\"docente\"}}},\"fields\":[{\"name\":\"docente\",\"label\":\"docente\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"apellido\",\"label\":\"apellido\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"nombres\",\"label\":\"nombres\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"cargo\",\"label\":\"cargo\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"email\",\"label\":\"email\",\"type\":\"email\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"email_alternativo\",\"label\":\"email alternativo\",\"type\":\"email\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"jefe\",\"label\":\"jefe\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"}]}",
         json,
     );
 }
@@ -123,7 +123,7 @@ test "stringifies a catalog from a system that is not aida" {
 
     var buf: [512]u8 = undefined;
     try expectEqualStrings(
-        "[{\"name\":\"items\",\"pk\":[\"id\"],\"uks\":{},\"fks\":{},\"fields\":[{\"name\":\"id\",\"label\":\"id\",\"type\":\"text\",\"storage\":\"text\"},{\"name\":\"nombre\",\"label\":\"nombre\",\"type\":\"text\",\"storage\":\"text\"}]}]",
+        "[{\"name\":\"items\",\"pk\":[\"id\"],\"uks\":{},\"fks\":{},\"fields\":[{\"name\":\"id\",\"label\":\"id\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"nombre\",\"label\":\"nombre\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"}]}]",
         try zigma_json.stringifyEntityCatalog(tiny.type_defs, tiny.entity_defs, &buf),
     );
 }
@@ -131,7 +131,7 @@ test "stringifies a catalog from a system that is not aida" {
 test "a struct field is object storage with nested fields" {
     var buf: [2048]u8 = undefined;
     const json = try zigma_json.stringifyEntitySchema(aida.type_defs, "clases", aida.clases, &buf);
-    try std.testing.expect(std.mem.indexOf(u8, json, "{\"name\":\"fecha\",\"label\":\"fecha\",\"type\":\"fecha\",\"storage\":\"object\",\"fields\":[{\"name\":\"año\",\"storage\":\"integer\"},{\"name\":\"mes\",\"storage\":\"integer\"},{\"name\":\"día\",\"storage\":\"integer\"}]}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "{\"name\":\"fecha\",\"label\":\"fecha\",\"type\":\"fecha\",\"is_name\":false,\"storage\":\"object\",\"fields\":[{\"name\":\"año\",\"storage\":\"integer\"},{\"name\":\"mes\",\"storage\":\"integer\"},{\"name\":\"día\",\"storage\":\"integer\"}]}") != null);
 }
 
 test "parseFieldValue rejects a non-integer string" {

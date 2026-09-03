@@ -12,6 +12,8 @@
         --tab-bar: #e8eaed;
         --accent: #188038;
         --focus: #1a73e8;
+        --pk: #f9ab00;
+        --fk: #5e35b1;
         --text: #202124;
         --muted: #5f6368;
       }
@@ -97,6 +99,32 @@
         z-index: 1;
         box-shadow: 0 1px 0 var(--grid);
       }
+      table.sheet th.pk,
+      table.sheet td.pk {
+        border-color: var(--pk);
+        border-width: 2px;
+      }
+      table.sheet th.fk,
+      table.sheet td.fk {
+        border-color: var(--fk);
+        border-width: 2px;
+      }
+      table.sheet th.pk.fk,
+      table.sheet td.pk.fk {
+        border-top-color: var(--pk);
+        border-bottom-color: var(--pk);
+        border-left-color: var(--fk);
+        border-right-color: var(--fk);
+      }
+      table.sheet th.pk {
+        box-shadow: 0 1px 0 var(--pk);
+      }
+      table.sheet th.fk {
+        box-shadow: 0 1px 0 var(--fk);
+      }
+      table.sheet th.pk.fk {
+        box-shadow: 0 1px 0 var(--pk);
+      }
       table.sheet th:last-child,
       table.sheet td.action {
         background: var(--header-bg);
@@ -120,7 +148,7 @@
       table.sheet tfoot td.action {
         background: #eef8f0;
       }
-      table.sheet td input {
+      table.sheet td input:not([type="hidden"]) {
         display: block;
         width: 100%;
         min-width: 0;
@@ -128,6 +156,18 @@
         margin: 0;
         border: none;
         padding: 0 6px;
+        font: inherit;
+        background: transparent;
+        outline: none;
+      }
+      table.sheet td select {
+        display: block;
+        width: 100%;
+        min-width: 0;
+        height: 24px;
+        margin: 0;
+        border: none;
+        padding: 0 4px 0 6px;
         font: inherit;
         background: transparent;
         outline: none;
@@ -150,7 +190,8 @@
         outline-offset: -2px;
         background: #fce8e6;
       }
-      table.sheet td input:focus {
+      table.sheet td input:focus,
+      table.sheet td select:focus {
         outline: 2px solid var(--focus);
         outline-offset: -2px;
         background: #fff;
@@ -174,10 +215,18 @@
       table.sheet td .object-fields input:last-child {
         border-right: none;
       }
-      table.sheet td input:read-only,
-      table.sheet td input:disabled {
+      table.sheet tbody td.pk input,
+      table.sheet tbody td.pk select {
+        pointer-events: none;
+        cursor: default;
+      }
+      table.sheet td input:disabled,
+      table.sheet td select:disabled {
         background: var(--locked);
         color: #5f6368;
+      }
+      table.sheet td .fk-locked {
+        height: 24px;
       }
       table.sheet td.action button {
         font: inherit;

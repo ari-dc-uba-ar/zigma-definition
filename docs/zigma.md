@@ -17,7 +17,8 @@ Two words appear everywhere:
   Infos, not Defs.
 
 Both are plain data (structs, strings, lists). Special behavior is referenced
-by name, never embedded as a function.
+by name, never embedded as a function. A viable shape for per-row input checks
+is [validators.md](validators.md) (not implemented).
 
 Everything below is a **comptime value**: checked while the program compiles,
 then available as ordinary data at runtime. The Zig types of instances (the

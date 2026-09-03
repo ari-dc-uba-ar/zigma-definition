@@ -3,7 +3,8 @@
 //! `stringifyRecordSchema` writes `[{name,label},...]` from a completed record Info.
 //! `stringifyEntitySchema` / `stringifyEntityCatalog` write entity Infos.
 //! Field `storage` is the Zig shape used by the page (`text`/`integer`/`boolean`/
-//! `object`), not the domain type name. A struct is `object` with nested `fields`.
+//! `object`), not the domain type name. Entity fields also include `is_name`.
+//! A struct is `object` with nested `fields`.
 //! `parseFieldValue` turns a cell string into that Zig type (structs as JSON objects;
 //! string fields alias the cell, they are not copies from parse scratch).
 //!
@@ -116,7 +117,7 @@ fn slicesInsideInput(comptime T: type, value: T, input: []const u8) bool {
     }
 }
 
-/// One entity Info as JSON (`name`, `pk`, `uks`, `fks`, `fields` with `type`/`storage`). `completeEntity` on `entity_def`; writes into `buf`.
+/// One entity Info as JSON (`name`, `pk`, `uks`, `fks`, `fields` with `type`/`is_name`/`storage`). `completeEntity` on `entity_def`; writes into `buf`.
 pub fn stringifyEntitySchema(comptime type_defs: anytype, entity_name: []const u8, comptime entity_def: anytype, buf: []u8) error{NoSpaceLeft}![]const u8 {
     const entity_info = zigma.completeEntity(entity_def);
     var pos: usize = 0;
@@ -163,7 +164,7 @@ pub fn stringifyEntityCatalog(comptime type_defs: anytype, comptime entity_defs:
     return buf[0..pos];
 }
 
-/// Appends the `fields` array (`name`/`label`/`type`/`storage`; nested `fields` if the Zig type is a struct). Advances `pos`.
+/// Appends the `fields` array (`name`/`label`/`type`/`is_name`/`storage`; nested `fields` if the Zig type is a struct). Advances `pos`.
 fn writeEntityFields(buf: []u8, pos: *usize, comptime type_defs: anytype, comptime rec: anytype, fields_info: anytype) error{NoSpaceLeft}!void {
     try writeByte(buf, pos, '[');
     inline for (@typeInfo(@TypeOf(fields_info)).@"struct".field_names, 0..) |name, i| {
@@ -182,6 +183,10 @@ fn writeEntityFields(buf: []u8, pos: *usize, comptime type_defs: anytype, compti
         try writeJsonString(buf, pos, "type");
         try writeByte(buf, pos, ':');
         try writeJsonString(buf, pos, info.type);
+        try writeByte(buf, pos, ',');
+        try writeJsonString(buf, pos, "is_name");
+        try writeByte(buf, pos, ':');
+        try writeRaw(buf, pos, if (info.is_name) "true" else "false");
         try writeByte(buf, pos, ',');
         try writeJsonString(buf, pos, "storage");
         try writeByte(buf, pos, ':');

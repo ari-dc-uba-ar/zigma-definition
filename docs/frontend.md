@@ -91,8 +91,9 @@ On first read of `schema_ptr` / `schema_len`, WASM calls `zigma_json.stringifyEn
 
 - `name` — entity name (struct field on `entity_defs`)
 - `pk`, `uks`, `fks` — completed keys (fks already source→target maps)
-- `fields` — array of `{ name, label, type, storage }`
+- `fields` — array of `{ name, label, type, is_name, storage }`
   - `type` is the **domain** type name (`text`, `legajo`, `fecha`, …)
+  - `is_name` is the completed field flag (`true` if this column is the row’s display name)
   - `storage` is the **Zig** shape used by widgets: `text` / `integer` / `boolean` / `object`
   - a struct also has nested `fields` (`name` + `storage`, recursively)
 
@@ -196,20 +197,25 @@ selectEntity(name)
   │    for each catalog entity:
   │      createElement("a")  href="#"+name  class "selected" if current
   │      appendChild
-  ├─ buildTable(entity)
-  │    thead: one <th> per field.label + empty actions <th>
-  │    tfoot: tr#new-row
-  │      for each field:
-  │        td.appendChild(makeInput(field, default, locked=false))
-  │          default: boolean → false, object → {}, else ""
-  │      button#post-row "New" + click listener  → see §3.5
-  └─ loadRows()  → see §3.4
+  └─ loadSheet()
+       GET /{entity} and GET /{fk.entity} once per distinct fk target
+       relatedByEntity[name] = rows
+       buildTable(entity)   // tfoot makeInput can read related lists
+       fillTable(relatedByEntity[entity.name])
 ```
 
-`makeInput` (consumer `widgets[field.type]`, else `storage`):
+`makeInput` (single-field fk → `<select>` of the target list; else consumer `widgets[field.type]`; else `storage`):
 
 ```
 makeInput(field, value, locked)
+  if field is a top-level source of a one-column fk:
+    if locked (pk): div.fk-locked
+      hidden input[data-field] = stored pk
+      disabled text input = target is_name (else pk) — no dropdown
+    else: <select data-field=name>
+      option value="" plus one option per target row
+      option value = mapped target field (the stored pk)
+      option text = target is_name fields, else the target pk
   if widgets[field.type].make: return that element
   if field.storage === "object" && field.fields:
     div.object-fields[data-field=name]
@@ -219,7 +225,7 @@ makeInput(field, value, locked)
     integer → type=text, inputmode=numeric, value
     boolean → type=checkbox, checked if true / "true"
     else    → type=text, value
-    if locked: boolean → disabled; else readOnly; tabIndex = -1
+    if locked: disabled; tabIndex = -1
 ```
 
 Aida registers `fecha` as `<input type="date">`. Click the cell (or the calendar glyph) to open the browser date picker. `read` converts ISO `yyyy-mm-dd` ↔ `{año, mes, día}`; packing is still JSON for WASM.

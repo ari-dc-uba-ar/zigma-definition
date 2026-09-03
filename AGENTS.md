@@ -1,6 +1,6 @@
 # Agent map
 
-Do not scan the repo. Open only the files listed for the task. Design rules, TDD, and Zig 0.17 notes live in `CLAUDE.md` (always loaded). Human how-tos: `README.md`, `docs/build.md`, `docs/run-example.md`, `docs/frontend.md`. Vocabulary walkthrough (leaves → root): `docs/zigma.md`.
+Do not scan the repo. Open only the files listed for the task. Design rules, TDD, and Zig 0.17 notes live in `CLAUDE.md` (always loaded). Human how-tos: `README.md`, `docs/build.md`, `docs/run-example.md`, `docs/frontend.md`. Vocabulary walkthrough (leaves → root): `docs/zigma.md`. Named object validators (design, not implemented): `docs/validators.md`.
 
 ## Where to look
 
@@ -13,6 +13,7 @@ Do not scan the repo. Open only the files listed for the task. Design rules, TDD
 | Expected compile failures | `test/compile_errors/<case>.zig` **and** the matching entry in `compile_error_cases` in `build.zig` |
 | JSON stringify of record instances / schema | `src/json.zig` + `test/json_test.zig` (+ `test/tiny_system.zig` for the non-aida contract) |
 | WASM page | `src/frontend/main.zig`, `src/frontend/main.js`, `src/frontend/index.html` |
+| Named object validators (design, not implemented) | `docs/validators.md` |
 | Consumer widgets | `examples/aida/src/widgets.js` (optional `widgets_js` on `addAppFromDep`) |
 | Consumer page title | optional `title` on `addApp` / `addAppFromDep`; generated `title.js` |
 | HTTP backend (in-memory CRUD from `system`) | `src/http/main.zig` |
@@ -74,7 +75,7 @@ python3 -m http.server 8000 --directory zig-out/frontend
 
 Details: [docs/run-example.md](docs/run-example.md).
 
-WASM exports: `schema_ptr`, `schema_len`, `input_ptr`, `input_len`, `lengths_ptr`, `json_ptr`, `json_len`, `error_ptr`, `error_len`, `build_row`, `create_row`. JS import: `env.js_send_post`. After WASM load, JS builds a nav from the entity catalog (`stringifyEntityCatalog(type_defs, entity_defs)`), one table from `entity.fields`, then `GET /{entity}`. The empty last row POSTs a typed record instance of that entity's fields; **Save** on a tbody row `PUT`s `/{entity}?pk…` (pk cells locked); **Delete** sends `DELETE /{entity}?pk…` with no body. Identity is the named query (every pk field required). Backend keeps an in-memory JSON list per entity name (optional `system.seeds`); GET returns it, POST appends, PUT replaces the matching pk, DELETE removes it. The example app wires `src/system.zig` as `system`.
+WASM exports: `schema_ptr`, `schema_len`, `input_ptr`, `input_len`, `lengths_ptr`, `json_ptr`, `json_len`, `error_ptr`, `error_len`, `build_row`, `create_row`. JS import: `env.js_send_post`. After WASM load, JS builds a nav from the entity catalog (`stringifyEntityCatalog(type_defs, entity_defs)`), one table from `entity.fields`, then `GET /{entity}` plus `GET /{fk.entity}` for each distinct fk target. A one-column fk cell is a `<select>` of that list (label from target `is_name`, else pk; the posted value is still the pk), except a locked pk+fk cell which shows the label with no dropdown. The empty last row POSTs a typed record instance of that entity's fields; **Save** on a tbody row `PUT`s `/{entity}?pk…` (pk cells locked); **Delete** sends `DELETE /{entity}?pk…` with no body. Identity is the named query (every pk field required). Backend keeps an in-memory JSON list per entity name (optional `system.seeds`); GET returns it, POST appends, PUT replaces the matching pk, DELETE removes it. The example app wires `src/system.zig` as `system`.
 
 ## Published package
 
