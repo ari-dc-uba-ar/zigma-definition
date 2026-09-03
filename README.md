@@ -165,6 +165,7 @@ const zigma_def = b.dependency("zigma_definition", .{});
 const zigma_build = @import("zigma_definition");
 _ = zigma_build.addAppFromDep(b, zigma_def, .{
     .system_root = b.path("src/system.zig"),
+    .title = "aida", // opcional; pestaña del navegador
     .target = target,
     .optimize = optimize,
 });

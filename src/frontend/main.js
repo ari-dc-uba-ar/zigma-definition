@@ -3,6 +3,8 @@ const apiBase = "http://localhost:8080";
 let catalog = [];
 let currentEntity = null;
 let wasmExports = null;
+/** Domain type name → `{ make, read }` from optional `./widgets.js`. */
+let widgets = {};
 
 const importObject = {
     env: {
@@ -50,8 +52,14 @@ function resourceUrl(entity, row) {
     return `${apiBase}/${entity.name}?${query}`;
 }
 
-/** Widget for `field.storage`: nested `.object-fields` or `<input>`. `locked` makes pk cells read-only. Returns the element. */
+function widgetFor(field) {
+    return field.type ? widgets[field.type] : undefined;
+}
+
+/** Widget for `field.type` if the consumer registered one, else `field.storage`. `locked` makes pk cells read-only. Returns the element. */
 function makeInput(field, value, locked) {
+    const widget = widgetFor(field);
+    if (widget?.make) return widget.make(field, value, locked);
     if (field.storage === "object" && field.fields) {
         const wrap = document.createElement("div");
         wrap.className = "object-fields";
@@ -85,8 +93,10 @@ function makeInput(field, value, locked) {
     return input;
 }
 
-/** Value of `field` under `root`: nested object, checkbox bool, number or raw string. Used inside object cells. */
+/** Value of `field` under `root`: nested object, checkbox bool, or raw string. Used inside object cells. */
 function readLeaf(root, field) {
+    const widget = widgetFor(field);
+    if (widget?.read) return widget.read(root, field);
     if (field.storage === "object" && field.fields) {
         const wrap = root.matches?.(`[data-field="${field.name}"].object-fields`)
             ? root
@@ -104,6 +114,12 @@ function readLeaf(root, field) {
 
 /** Cell string for WASM packing: object → JSON, boolean → `"true"`/`"false"`, else the input value. */
 function readFieldValue(td, field) {
+    const widget = widgetFor(field);
+    if (widget?.read) {
+        const value = widget.read(td, field);
+        if (typeof value === "object") return JSON.stringify(value ?? {});
+        return String(value ?? "");
+    }
     if (field.storage === "object" && field.fields) {
         return JSON.stringify(readLeaf(td, field));
     }
@@ -273,7 +289,9 @@ function textWidth(text, styleSource) {
 function inputContentWidth(input) {
     if (input.type === "checkbox") return 28;
     const cs = getComputedStyle(input);
-    return textWidth(input.value, input) + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + 2;
+    const content = textWidth(input.value, input) + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + 2;
+    if (input.type === "date") return Math.max(160, content);
+    return content;
 }
 
 function cellContentWidth(cell) {
@@ -480,7 +498,18 @@ document.getElementById("sheet-table").addEventListener("change", (event) => {
     scheduleFitSheetColumns();
 });
 
-WebAssembly.instantiateStreaming(fetch("frontend.wasm"), importObject)
+function loadWidgets() {
+    return import("./widgets.js")
+        .then((mod) => {
+            widgets = mod.widgets ?? {};
+        })
+        .catch(() => {
+            widgets = {};
+        });
+}
+
+loadWidgets()
+    .then(() => WebAssembly.instantiateStreaming(fetch("frontend.wasm"), importObject))
     .then((obj) => {
         wasmExports = obj.instance.exports;
         window.wasmInstance = obj.instance;

@@ -2,7 +2,7 @@
 
 How to run the example: [run-example.md](run-example.md). Build graph: [build.md](build.md). Vocabulary (Defs → Infos): [zigma.md](zigma.md).
 
-The page is **not** HTML/JS emitted from Zig at compile time. `src/frontend/` is a generic client: it knows `zigma`, `zigma_json`, and a `system` module (`type_defs` + `entity_defs`). The aida example is a consumer package: `examples/aida/build.zig` calls `addAppFromDep` with `src/system.zig` as `system`. The table is built **at runtime** from entity Infos that live in the WASM module. JS never imports a concrete system.
+The page is **not** HTML/JS emitted from Zig at compile time. `src/frontend/` is a generic client: it knows `zigma`, `zigma_json`, and a `system` module (`type_defs` + `entity_defs`). The aida example is a consumer package: `examples/aida/build.zig` calls `addAppFromDep` with `src/system.zig` as `system`, `src/widgets.js` as `widgets_js`, and `title = "aida"`. The table is built **at runtime** from entity Infos that live in the WASM module. JS never imports a concrete system; domain-type widgets are an optional consumer map loaded from `./widgets.js`.
 
 This document is the layer in detail: first how the pieces sit together, then every function call on each user flow.
 
@@ -26,10 +26,14 @@ flowchart TB
     wasm["frontend/frontend.wasm"]
     html["frontend/index.html<br/>empty shell"]
     js["frontend/main.js<br/>copied as-is"]
+    titlejs["frontend/title.js<br/>generated document.title"]
+    wjs["frontend/widgets.js<br/>optional consumer copy"]
     bin["bin/backend"]
     addApp -->|"compile main.zig<br/>wasm32, rdynamic, export memory"| wasm
     addApp -->|"copy"| html
     addApp -->|"copy"| js
+    addApp -->|"WriteFile title.js"| titlejs
+    addApp -->|"copy if widgets_js"| wjs
     addApp -->|"compile http/main.zig<br/>host target"| bin
   end
 
@@ -58,7 +62,7 @@ flowchart TB
 | --- | --- |
 | `system.zig` → WASM | Same `type_defs` / `entity_defs` baked into `frontend.wasm`. Catalog JSON is `stringifyEntityCatalog` of those Defs (Infos via `completeEntity`). Seeds are **not** in WASM. |
 | `system.zig` → HTTP | Same Defs plus optional `seeds`. Lists start from `stringifyRecord` of each seed row. |
-| HTML → JS | Shell only: `#entity-nav`, `#sheet-title`, `#sheet-table` (`thead`/`tbody`/`tfoot`), `#status`. No columns until JS runs. |
+| HTML → JS | Shell only: `#entity-nav`, `#sheet-title`, `#sheet-table` (`thead`/`tbody`/`tfoot`), `#status`. `<script src="title.js">` sets `document.title` from `addApp` `.title` (empty if omitted). No columns until JS runs. |
 | JS → WASM exports | Pointer/length accessors plus `build_row(entity_index)` / `create_row(entity_index)`. `entity_index` is field order on `entity_defs` (same order as the catalog array). |
 | WASM → JS import | `env.js_send_post(ptr, len)`: Zig has already written row JSON into `json_buf`; JS reads that slice and `fetches` `POST`. Zig does **not** await the Promise (the POST is fire-and-forget from WASM’s point of view; JS still `await`s inside the import). |
 | JS → HTTP | Hard-coded `http://localhost:8080`. CORS `*` on the server. Identity for PUT/DELETE is the query string (every pk field, nothing else). POST has no query. GET has no query. |
@@ -104,7 +108,7 @@ Notation: `file: function` then callees. Browser APIs are included when they are
 
 ```
 examples/aida/build.zig
-  └─ @import("zigma_definition").addAppFromDep(b, dep, .{ .system_root, .target, .optimize })
+  └─ @import("zigma_definition").addAppFromDep(b, dep, .{ .system_root, .widgets_js?, .title?, .target, .optimize })
        └─ build.zig: addApp
             ├─ zigmaModule / jsonModule / systemModule   (host)
             │    └─ backend executable  ← src/http/main.zig
@@ -113,7 +117,9 @@ examples/aida/build.zig
             │         .entry = .disabled, .rdynamic, .export_memory
             ├─ install artifact → zig-out/frontend/frontend.wasm
             ├─ installFile      → zig-out/frontend/main.js     (copy)
-            └─ installFile      → zig-out/frontend/index.html  (copy)
+            ├─ installFile      → zig-out/frontend/index.html  (copy)
+            ├─ WriteFile        → zig-out/frontend/title.js    (`document.title` from `.title`)
+            └─ installFile      → zig-out/frontend/widgets.js  (copy if `widgets_js`)
 ```
 
 The library `zig build` at the repo root does **not** install this app. Generators under `src/` **are** in the published package so a consumer can call `addAppFromDep`.
@@ -122,15 +128,19 @@ The library `zig build` at the repo root does **not** install this app. Generato
 
 ### 3.2 Page load → catalog → first table
 
-Triggered by the browser loading `index.html` (`<script src="main.js">`). Status text starts as `Loading...`.
+Triggered by the browser loading `index.html` (`<script src="title.js">` then `<script src="main.js">`). Status text starts as `Loading...`.
 
 ```
 browser
   └─ fetch("index.html") → parse DOM (empty nav, empty table)
+       ├─ fetch("title.js") → document.title from addApp `.title`
        └─ fetch("main.js") → execute
 
 main.js  (top level)
-  └─ WebAssembly.instantiateStreaming(fetch("frontend.wasm"), importObject)
+  └─ loadWidgets()
+       import("./widgets.js") → widgets = mod.widgets ?? {}
+       missing file → widgets = {}
+       then WebAssembly.instantiateStreaming(fetch("frontend.wasm"), importObject)
        │  importObject.env.js_send_post = async (ptr, len) => { … }  // registered, not called yet
        │
        ├─ [success]
@@ -196,10 +206,11 @@ selectEntity(name)
   └─ loadRows()  → see §3.4
 ```
 
-`makeInput` (widgets from `storage`):
+`makeInput` (consumer `widgets[field.type]`, else `storage`):
 
 ```
 makeInput(field, value, locked)
+  if widgets[field.type].make: return that element
   if field.storage === "object" && field.fields:
     div.object-fields[data-field=name]
     for each nested field: append makeInput(sub, obj[sub.name], locked)
@@ -210,6 +221,8 @@ makeInput(field, value, locked)
     else    → type=text, value
     if locked: boolean → disabled; else readOnly; tabIndex = -1
 ```
+
+Aida registers `fecha` as `<input type="date">`. Click the cell (or the calendar glyph) to open the browser date picker. `read` converts ISO `yyyy-mm-dd` ↔ `{año, mes, día}`; packing is still JSON for WASM.
 
 ---
 
@@ -504,12 +517,13 @@ JS does not call this explicitly; `fetch` does.
 | --- | --- |
 | `src/frontend/main.zig` | WASM: catalog, packed-string `build_row` / `create_row`, exports, `js_send_post` import |
 | `src/json.zig` | `stringifyEntityCatalog`, `stringifyRecord`, `parseFieldValue`, `fieldStorage` |
-| `src/frontend/main.js` | Nav + table from catalog; packing; GET/POST/PUT/DELETE |
-| `src/frontend/index.html` | Empty shell + CSS for the sheet |
+| `src/frontend/main.js` | Nav + table from catalog; packing; GET/POST/PUT/DELETE; optional `./widgets.js` |
+| `src/frontend/index.html` | Empty shell + CSS for the sheet; loads generated `title.js` |
 | `src/http/main.zig` | In-memory lists; same `system`; CORS |
 | `examples/aida/src/aida.zig` | Domain Defs (vocabulary fixture) |
 | `examples/aida/src/system.zig` | Wired as `system` (Defs + demo seeds) |
+| `examples/aida/src/widgets.js` | Domain type → widget (`fecha` date picker) |
 | `examples/aida/build.zig` | Consumer: `addAppFromDep` |
-| `build.zig` `addApp` | Native HTTP + WASM + copy of html/js |
+| `build.zig` `addApp` | Native HTTP + WASM + copy of html/js (+ generated `title.js`, optional `widgets.js`) |
 
 Nothing is written to disk at runtime. Restarting the backend restores `seeds`.

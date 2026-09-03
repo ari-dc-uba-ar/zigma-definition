@@ -39,10 +39,12 @@ zig build frontend
 (`zig build` does the same install, plus the backend binary.) That writes `examples/aida/zig-out/frontend/` with:
 
 - `index.html` — shell (nav + empty table; JS fills them from the WASM catalog)
+- `title.js` — generated `document.title` from `addAppFromDep` `.title` (`"aida"`)
 - `main.js` — reads the entity catalog from WASM, builds the table, `GET`/`POST /{entity}`, `PUT`/`DELETE /{entity}?pk…`
+- `widgets.js` — aida’s domain-type widgets (`fecha` → date picker); optional for other consumers
 - `frontend.wasm` — catalog from `completeEntity` of every entity in `src/system.zig`, typed row builder, JSON via `stringifyRecord`
 
-The WASM/JS sources themselves still live in the framework package (`src/frontend/`); `addAppFromDep` compiles them.
+The WASM/JS sources themselves still live in the framework package (`src/frontend/`); `addAppFromDep` compiles them. The consumer may pass `widgets_js` to install a `widgets.js` map next to `main.js`, and `title` to generate `title.js` (`document.title`; aida uses `"aida"`).
 
 ## 2. Backend
 
@@ -86,9 +88,10 @@ The library `zig build` at the repo root does **not** install this app.
 | --- | --- |
 | `examples/aida/src/aida.zig` | domain Defs only (also the library test fixture) |
 | `examples/aida/src/system.zig` | `system` for generators: aida Defs + demo seeds |
-| `examples/aida/build.zig` | consumer: `addAppFromDep` |
+| `examples/aida/src/widgets.js` | domain type → widget (`fecha` date picker) |
+| `examples/aida/build.zig` | consumer: `addAppFromDep` (`.title = "aida"`) |
 | `src/frontend/main.zig` | WASM: catalog + row builder; `system` is injected at build |
 | `src/json.zig` | JSON for rows and entity Infos |
 | `src/frontend/main.js` | nav + table from the catalog; `GET`/`POST /{entity}`, `PUT`/`DELETE /{entity}?pk` |
-| `src/frontend/index.html` | shell: nav, empty table + status |
+| `src/frontend/index.html` | shell: nav, empty table + status; loads generated `title.js` |
 | `src/http/main.zig` | in-memory `GET`/`POST /{entity}`, `PUT`/`DELETE /{entity}?pk` from `system` |

@@ -76,6 +76,8 @@ const zigma_def = b.dependency("zigma_definition", .{});
 const zigma_build = @import("zigma_definition");
 _ = zigma_build.addAppFromDep(b, zigma_def, .{
     .system_root = b.path("src/system.zig"),
+    .widgets_js = b.path("src/widgets.js"), // optional
+    .title = "aida", // optional; browser tab, generated `title.js`
     .target = target,
     .optimize = optimize,
 });

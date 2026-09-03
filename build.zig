@@ -64,6 +64,10 @@ pub const AppOptions = struct {
     system_root: std.Build.LazyPath,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    /// Optional consumer map `domain type → widget`; installed as `widgets.js`.
+    widgets_js: ?std.Build.LazyPath = null,
+    /// Optional browser tab title; installed as generated `title.js`.
+    title: ?[]const u8 = null,
 };
 
 pub const App = struct {
@@ -187,6 +191,20 @@ pub fn addApp(b: *std.Build, opts: AppOptions) App {
     frontend_step.dependOn(&install_js.step);
     frontend_step.dependOn(&install_html.step);
 
+    const title_js = b.addWriteFiles().add(
+        "title.js",
+        b.fmt("document.title = {f};\n", .{std.json.fmt(opts.title orelse "", .{})}),
+    );
+    const install_title = b.addInstallFileWithDir(title_js, frontend_dir, "title.js");
+    b.getInstallStep().dependOn(&install_title.step);
+    frontend_step.dependOn(&install_title.step);
+
+    if (opts.widgets_js) |widgets_js| {
+        const install_widgets = b.addInstallFileWithDir(widgets_js, frontend_dir, "widgets.js");
+        b.getInstallStep().dependOn(&install_widgets.step);
+        frontend_step.dependOn(&install_widgets.step);
+    }
+
     const run_backend = b.addRunArtifact(backend);
     run_backend.has_side_effects = true;
     const backend_step = b.step("backend", "Run the HTTP backend generated from the system module");
@@ -209,6 +227,8 @@ pub fn addAppFromDep(
         system_root: std.Build.LazyPath,
         target: std.Build.ResolvedTarget,
         optimize: std.builtin.OptimizeMode,
+        widgets_js: ?std.Build.LazyPath = null,
+        title: ?[]const u8 = null,
     },
 ) App {
     return addApp(b, .{
@@ -216,6 +236,8 @@ pub fn addAppFromDep(
         .system_root = opts.system_root,
         .target = opts.target,
         .optimize = opts.optimize,
+        .widgets_js = opts.widgets_js,
+        .title = opts.title,
     });
 }
 

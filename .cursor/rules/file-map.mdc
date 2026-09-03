@@ -16,6 +16,8 @@ Read `AGENTS.md` for the full index. `CLAUDE.md` has design/TDD/Zig 0.17 rules. 
 | Compile-error case | `test/compile_errors/<name>.zig` + `compile_error_cases` in `build.zig` |
 | Record JSON | `src/json.zig`, `test/json_test.zig` (`test/tiny_system.zig` for non-aida) |
 | WASM page | `src/frontend/main.zig`, `src/frontend/main.js`, `src/frontend/index.html` |
+| Consumer widgets (`domain type → { make, read }`) | `examples/aida/src/widgets.js` (`addApp` `widgets_js`) |
+| Consumer page title | `addApp` / `addAppFromDep` optional `title` (generated `title.js`) |
 | HTTP backend | `src/http/main.zig` |
 | Build graph / modules / `addApp` | `build.zig` |
 | Package metadata | `build.zig.zon` |

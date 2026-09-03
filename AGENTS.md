@@ -13,6 +13,8 @@ Do not scan the repo. Open only the files listed for the task. Design rules, TDD
 | Expected compile failures | `test/compile_errors/<case>.zig` **and** the matching entry in `compile_error_cases` in `build.zig` |
 | JSON stringify of record instances / schema | `src/json.zig` + `test/json_test.zig` (+ `test/tiny_system.zig` for the non-aida contract) |
 | WASM page | `src/frontend/main.zig`, `src/frontend/main.js`, `src/frontend/index.html` |
+| Consumer widgets | `examples/aida/src/widgets.js` (optional `widgets_js` on `addAppFromDep`) |
+| Consumer page title | optional `title` on `addApp` / `addAppFromDep`; generated `title.js` |
 | HTTP backend (in-memory CRUD from `system`) | `src/http/main.zig` |
 | Modules, test graph, `addApp`, wasm/backend steps | `build.zig` |
 | Package name, zig version, published paths | `build.zig.zon` |
@@ -50,7 +52,7 @@ Field Def properties: `type` (required, name in `type_defs`), optional `label`, 
 | (WASM) | `src/frontend/main.zig` | catalog + typed row builder; import name `system` |
 | (HTTP) | `src/http/main.zig` | `GET`/`POST /{entity}`; `PUT`/`DELETE /{entity}?pk`; in-memory; import name `system` |
 
-`addApp` in `build.zig` compiles native HTTP and WASM frontend from one system file, with separate module graphs per target. Consumer (see `examples/aida/build.zig`): `@import("zigma_definition").addAppFromDep(b, dep, .{ .system_root, .target, .optimize })`.
+`addApp` in `build.zig` compiles native HTTP and WASM frontend from one system file, with separate module graphs per target. Consumer (see `examples/aida/build.zig`): `@import("zigma_definition").addAppFromDep(b, dep, .{ .system_root, .widgets_js, .title, .target, .optimize })`. Optional `title` is installed as generated `title.js` (`document.title`).
 
 ## Tests
 
